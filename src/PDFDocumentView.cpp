@@ -21,7 +21,7 @@
 // **TODO:** _Find a better place to put these._
 static bool isPageItem(QGraphicsItem *item) { return ( item->type() == PDFPageGraphicsItem::Type ); }
 
-#ifdef DEBUG
+#ifdef MU_DEBUG
   QTime stopwatch;
 #endif
 
@@ -485,7 +485,7 @@ PDFDocumentScene::PDFDocumentScene(Poppler::Document *a_doc, MuPDF::Document *a_
   _doc->setRenderHint(Poppler::Document::TextAntialiasing);
 
   _lastPage = _mu_doc->numPages();
-#ifdef DEBUG
+#ifdef MU_DEBUG
   qDebug() << "MuPDF page count: " << _mu_doc->numPages();
   qDebug() << "Poppler page count: " << _doc->numPages();
 #endif
@@ -497,7 +497,7 @@ PDFDocumentScene::PDFDocumentScene(Poppler::Document *a_doc, MuPDF::Document *a_
   int i;
   PDFPageGraphicsItem *pagePtr;
 
-#ifdef DEBUG
+#ifdef MU_DEBUG
   stopwatch.start();
 #endif
   for (i = 0; i < _lastPage; ++i)
@@ -507,7 +507,7 @@ PDFDocumentScene::PDFDocumentScene(Poppler::Document *a_doc, MuPDF::Document *a_
     addItem(pagePtr);
     _pageLayout.addPage(pagePtr);
   }
-#ifdef DEBUG
+#ifdef MU_DEBUG
   qDebug() << "Took: " << stopwatch.elapsed() << " ms to load pages.";
 #endif
   _pageLayout.relayout();

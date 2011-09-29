@@ -1,8 +1,10 @@
 CXX ?= g++
 
 CXXFLAGS := -g -O0 -I. -I./src $(shell pkg-config freetype2 poppler poppler-qt4 QtCore QtGui QtXml --cflags)
+# Disable implicit casts from ASCII to UTF8
+CXXFLAGS += -DQT_NO_CAST_FROM_ASCII -DQT_NO_CAST_TO_ASCII -DQT_NO_CAST_FROM_BYTEARRAY
 # Debugging output?
-CXXFLAGS += -DDEBUG -DQT_NO_CAST_FROM_ASCII -DQT_NO_CAST_TO_ASCII -DQT_NO_CAST_FROM_BYTEARRAY
+CXXFLAGS += -DDEBUG -DMU_DEBUG
 LDFLAGS := $(shell pkg-config freetype2 poppler poppler-qt4 QtCore QtGui QtXml --libs)
 # MuPDF libraries. MuPDF builds as a static lib, so its dependencies have to be
 # explicitly linked.
