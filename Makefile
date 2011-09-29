@@ -6,10 +6,10 @@ CXXFLAGS += -DDEBUG -DQT_NO_CAST_FROM_ASCII -DQT_NO_CAST_TO_ASCII -DQT_NO_CAST_F
 LDFLAGS := $(shell pkg-config freetype2 poppler poppler-qt4 QtCore QtGui QtXml --libs)
 # MuPDF libraries. MuPDF builds as a static lib, so its dependencies have to be
 # explicitly linked.
-LDFLAGS += -lfitz -lmupdf -ljbig2dec -ljpeg -lz
+LDFLAGS += -lfitz -lmupdf -ljbig2dec -ljpeg -lopenjpeg -lz
 
 VPATH = src
-SRCS := main.cpp PDFViewer.cpp moc_PDFViewer.cpp PDFDocumentView.cpp moc_PDFDocumentView.cpp
+SRCS := main.cpp PDFViewer.cpp moc_PDFViewer.cpp PDFDocumentView.cpp moc_PDFDocumentView.cpp MuPDF.cpp
 
 all: pdf_viewer
 

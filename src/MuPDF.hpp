@@ -25,9 +25,13 @@ extern "C"
 #include <mupdf.h>
 }
 
+class Document;
+class Page;
 
 class Document
 {
+  friend class Page;
+
   // The pdf_xref is the main MuPDF object that represents a Document. Calls
   // that use it may have to be protected by a mutex.
   pdf_xref *_pdf_data;
@@ -35,34 +39,37 @@ class Document
 
 public:
 
-  Document(QString fileName):
-    _pdf_data(NULL),
-    _numPages(-1)
-  {
-    // NOTE: The next two calls can fail---we need to check for that
-    fz_stream *pdf_file = fz_open_file(fileName.toLocal8Bit().data());
-    pdf_open_xref_with_stream(&_pdf_data, pdf_file, NULL);
-    fz_close(pdf_file);
+  Document(QString fileName);
+  ~Document();
 
-    // NOTE: This can also fail.
-    pdf_load_page_tree(_pdf_data);
-
-    _numPages = pdf_count_pages(_pdf_data);
-  }
-
-  ~Document()
-  {
-    if( _pdf_data ){
-      pdf_free_xref(_pdf_data);
-      _pdf_data = NULL;
-    }
-  }
-
-  int numPages() { return _numPages; }
+  int numPages();
+  Page *page(int at);
 
 };
 
 
-} // End MuPDF namespace
+class Page
+{
+  Document *_parent;
+  // The pdf_page is the main MuPDF object that represents a Page.
+  fz_display_list *_page;
+  QRectF _bbox;
+  QSizeF _size;
+  qreal _rotate;
+  const int _n;
 
+public:
+
+  Page(Document *parent, int at);
+  ~Page();
+
+  int pageNum();
+  qreal rotate();
+  QSizeF pageSizeF();
+
+};
+
+
+
+}      // End MuPDF namespace
 #endif // End header guard

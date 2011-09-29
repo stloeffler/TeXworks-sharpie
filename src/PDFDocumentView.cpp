@@ -21,6 +21,10 @@
 // **TODO:** _Find a better place to put these._
 static bool isPageItem(QGraphicsItem *item) { return ( item->type() == PDFPageGraphicsItem::Type ); }
 
+#ifdef DEBUG
+  QTime stopwatch;
+#endif
+
 // PDFDocumentView
 // ===============
 
@@ -493,13 +497,19 @@ PDFDocumentScene::PDFDocumentScene(Poppler::Document *a_doc, MuPDF::Document *a_
   int i;
   PDFPageGraphicsItem *pagePtr;
 
+#ifdef DEBUG
+  stopwatch.start();
+#endif
   for (i = 0; i < _lastPage; ++i)
   {
-    pagePtr = new PDFPageGraphicsItem(_doc->page(i));
+    pagePtr = new PDFPageGraphicsItem(_doc->page(i), _mu_doc->page(i));
     _pages.append(pagePtr);
     addItem(pagePtr);
     _pageLayout.addPage(pagePtr);
   }
+#ifdef DEBUG
+  qDebug() << "Took: " << stopwatch.elapsed() << " ms to load pages.";
+#endif
   _pageLayout.relayout();
 }
 
@@ -610,9 +620,10 @@ void PDFDocumentScene::showAllPages() const
 
 // This class descends from `QGraphicsObject` and implements the on-screen
 // representation of `Poppler::Page` objects.
-PDFPageGraphicsItem::PDFPageGraphicsItem(Poppler::Page *a_page, QGraphicsItem *parent):
+PDFPageGraphicsItem::PDFPageGraphicsItem(Poppler::Page *a_page, MuPDF::Page *a_mu_page, QGraphicsItem *parent):
   Super(parent),
   _page(a_page),
+  _mu_page(a_mu_page),
   _dpiX(QApplication::desktop()->physicalDpiX()),
   _dpiY(QApplication::desktop()->physicalDpiY()),
 
@@ -624,7 +635,10 @@ PDFPageGraphicsItem::PDFPageGraphicsItem(Poppler::Page *a_page, QGraphicsItem *p
   // Create an empty pixmap that is the same size as the PDF page. This
   // allows us to delay the rendering of pages until they actually come into
   // view yet still know what the page size is.
-  _pageSize = _page->pageSizeF();
+
+  // NOTE: MuPDF page bboxes  appear to be a bit bigger---or hit with the `ceil`
+  // function but the sizes are the same.
+  _pageSize = _mu_page->pageSizeF();
   _pageSize.setWidth(_pageSize.width() * _dpiX / 72.0);
   _pageSize.setHeight(_pageSize.height() * _dpiY / 72.0);
 
