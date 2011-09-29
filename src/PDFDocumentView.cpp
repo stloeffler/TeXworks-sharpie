@@ -480,8 +480,12 @@ PDFDocumentScene::PDFDocumentScene(Poppler::Document *a_doc, MuPDF::Document *a_
   _doc->setRenderHint(Poppler::Document::Antialiasing);
   _doc->setRenderHint(Poppler::Document::TextAntialiasing);
 
-  _lastPage = _doc->numPages();
-  
+  _lastPage = _mu_doc->numPages();
+#ifdef DEBUG
+  qDebug() << "MuPDF page count: " << _mu_doc->numPages();
+  qDebug() << "Poppler page count: " << _doc->numPages();
+#endif
+
   connect(&_pageLayout, SIGNAL(layoutChanged(const QRectF)), this, SLOT(pageLayoutChanged(const QRectF)));
 
   // Create a `PDFPageGraphicsItem` for each page in the PDF document and let
