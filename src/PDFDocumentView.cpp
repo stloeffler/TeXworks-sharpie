@@ -1484,9 +1484,11 @@ bool PageProcessingRenderPageRequest::execute()
     return false;
 
   QMutexLocker docLock(qobject_cast<PDFDocumentScene *>(page->scene())->docMutex);
-  QImage pageImage = page->_page->renderToImage(page->_dpiX * scaleFactor, page->_dpiY * scaleFactor);
+  //QImage pageImage = page->_page->renderToImage(page->_dpiX * scaleFactor, page->_dpiY * scaleFactor);
+  QImage pageImage = page->_mu_page->renderToImage(page->_dpiX * scaleFactor, page->_dpiY * scaleFactor);
+  //page->_mu_page->renderToImage(page->_dpiX * scaleFactor, page->_dpiY * scaleFactor);
   docLock.unlock();
-  
+
   emit pageImageReady(scaleFactor, pageImage);
   return true;
 }

@@ -19,6 +19,7 @@ namespace MuPDF
 
 Document::Document(QString fileName):
   _pdf_data(NULL),
+  _glyph_cache(fz_new_glyph_cache()),
   _numPages(-1)
 {
   // NOTE: The next two calls can fail---we need to check for that
@@ -30,6 +31,7 @@ Document::Document(QString fileName):
   pdf_load_page_tree(_pdf_data);
 
   _numPages = pdf_count_pages(_pdf_data);
+
 }
 
 Document::~Document()
@@ -38,6 +40,8 @@ Document::~Document()
     pdf_free_xref(_pdf_data);
     _pdf_data = NULL;
   }
+
+  fz_free_glyph_cache(_glyph_cache);
 }
 
 int Document::numPages() { return _numPages; }
@@ -56,10 +60,8 @@ Page::Page(Document *parent, int at):
 
   qreal _rotate = qreal(page_data->rotate);
 
-  fz_rect page_bbox = page_data->mediabox;
-  _bbox = QRectF( QPointF(qreal(page_bbox.x0), qreal(page_bbox.y0)),
-                  QPointF(qreal(page_bbox.x1), qreal(page_bbox.y1)) );
-  _size = QSizeF(qreal(page_bbox.x1 - page_bbox.x0), qreal(page_bbox.y1 - page_bbox.y0));
+  _bbox = page_data->mediabox;
+  _size = QSizeF(qreal(_bbox.x1 - _bbox.x0), qreal(_bbox.y1 - _bbox.y0));
 
   // Here we parse the page into an intermediate format---this is a key
   // operation that Poppler lacks, it allows multiple renders to be made
@@ -86,5 +88,38 @@ int Page::pageNum() { return _n; }
 qreal Page::rotate() { return _rotate; }
 QSizeF Page::pageSizeF()   { return _size; }
 
+QImage Page::renderToImage(double xres, double yres)
+{
+  // Set up the transformation matrix for the page. Really, we just start with
+  // an identity matrix and scale it using the xres, yres inputs.
+  fz_matrix render_trans = fz_identity;
+  render_trans = fz_concat(render_trans, fz_translate(0, -_bbox.y1));
+  render_trans = fz_concat(render_trans, fz_scale(xres / 72.0f, yres / 72.0f));
+  render_trans = fz_concat(render_trans, fz_rotate(_rotate));
 
-}      // End MuPDF namespace
+  fz_bbox render_bbox = fz_round_rect(fz_transform_rect(render_trans, _bbox));
+
+  // NOTE: Using fz_device_bgr or fz_device_rbg may depend on platform endianness.
+  fz_pixmap *mu_image = fz_new_pixmap_with_rect(fz_device_bgr, render_bbox);
+  // Flush to white.
+  fz_clear_pixmap_with_color(mu_image, 255);
+  fz_device *renderer = fz_new_draw_device(_parent->_glyph_cache, mu_image);
+
+  // Actually render the page.
+  fz_execute_display_list(_page, renderer, render_trans, render_bbox);
+
+  // Create a QImage that shares data with the fz_pixmap.
+  QImage tmp_image(mu_image->samples, mu_image->w, mu_image->h, QImage::Format_ARGB32);
+  // Now create a copy with its own data that can exist outside this function
+  // call.
+  QImage rendered_image = tmp_image.copy();
+
+  // Dispose of unneeded items.
+  fz_free_device(renderer);
+  fz_drop_pixmap(mu_image);
+
+  return rendered_image.mirrored();
+}
+
+
+} // End MuPDF namespace

@@ -269,7 +269,7 @@ class PDFDocumentScene : public QGraphicsScene {
   typedef QGraphicsScene Super;
 
   const std::auto_ptr<Poppler::Document> _doc;
-  const std::auto_ptr<MuPDF::Document> _mu_doc;
+  MuPDF::Document *_mu_doc;
 
   // This may change to a `QSet` in the future
   QList<QGraphicsItem*> _pages;

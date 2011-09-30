@@ -15,6 +15,7 @@
 #define MuPDF_HPP
 
 #include <QtCore>
+#include <QImage>
 
 namespace MuPDF
 {
@@ -35,6 +36,7 @@ class Document
   // The pdf_xref is the main MuPDF object that represents a Document. Calls
   // that use it may have to be protected by a mutex.
   pdf_xref *_pdf_data;
+  fz_glyph_cache *_glyph_cache;
   int _numPages;
 
 public:
@@ -53,7 +55,8 @@ class Page
   Document *_parent;
   // The pdf_page is the main MuPDF object that represents a Page.
   fz_display_list *_page;
-  QRectF _bbox;
+  // Keep as a Fitz object rather than QRect as it is used in rendering ops.
+  fz_rect _bbox;
   QSizeF _size;
   qreal _rotate;
   const int _n;
@@ -66,6 +69,8 @@ public:
   int pageNum();
   qreal rotate();
   QSizeF pageSizeF();
+
+  QImage renderToImage(double xres, double yres);
 
 };
 
