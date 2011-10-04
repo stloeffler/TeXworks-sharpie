@@ -40,42 +40,6 @@ int main()
 	fz_free_device(dev);
 	PROFILING("Load page");
 
-	qDebug() << "";
-	qDebug() << "Render full page";
-	qDebug() << "[dpi] [ms]";
-
-	for (dpi = 100; dpi <= 1200; dpi += 100) {
-		stopWatch.restart();
-		QImage tmp;
-
-		{
-			float zoom;
-			fz_matrix ctm;
-			fz_bbox bbox;
-			fz_pixmap *pix;
-
-			zoom = dpi / 72;
-			ctm = fz_translate(0, -page->mediabox.y1);
-			ctm = fz_concat(ctm, fz_scale(zoom, -zoom));
-			ctm = fz_concat(ctm, fz_rotate(page->rotate));
-			bbox = fz_round_rect(fz_transform_rect(ctm, page->mediabox));
-
-			pix = fz_new_pixmap_with_rect(fz_device_bgr, bbox);
-			fz_clear_pixmap_with_color(pix, 255);
-
-			dev = fz_new_draw_device(glyphcache, pix);
-			fz_execute_display_list(list, dev, ctm, bbox);
-			fz_free_device(dev);
-
-			QImage buffer(pix->samples, pix->w, pix->h, QImage::Format_ARGB32);
-			tmp = buffer.copy();
-
-			fz_drop_pixmap(pix);
-		}
-
-		qDebug() << dpi << stopWatch.restart();
-	}
-
 	int w, h;
 	int x, y;
 //	w = page->pageSize().width() * 100 / 72;
@@ -113,6 +77,42 @@ int main()
 			QImage buffer(pix->samples, pix->w, pix->h, QImage::Format_ARGB32);
 			tmp = buffer.copy();
 			
+			fz_drop_pixmap(pix);
+		}
+
+		qDebug() << dpi << stopWatch.restart();
+	}
+
+	qDebug() << "";
+	qDebug() << "Render full page";
+	qDebug() << "[dpi] [ms]";
+
+	for (dpi = 100; dpi <= 1200; dpi += 100) {
+		stopWatch.restart();
+		QImage tmp;
+
+		{
+			float zoom;
+			fz_matrix ctm;
+			fz_bbox bbox;
+			fz_pixmap *pix;
+
+			zoom = dpi / 72;
+			ctm = fz_translate(0, -page->mediabox.y1);
+			ctm = fz_concat(ctm, fz_scale(zoom, -zoom));
+			ctm = fz_concat(ctm, fz_rotate(page->rotate));
+			bbox = fz_round_rect(fz_transform_rect(ctm, page->mediabox));
+
+			pix = fz_new_pixmap_with_rect(fz_device_bgr, bbox);
+			fz_clear_pixmap_with_color(pix, 255);
+
+			dev = fz_new_draw_device(glyphcache, pix);
+			fz_execute_display_list(list, dev, ctm, bbox);
+			fz_free_device(dev);
+
+			QImage buffer(pix->samples, pix->w, pix->h, QImage::Format_ARGB32);
+			tmp = buffer.copy();
+
 			fz_drop_pixmap(pix);
 		}
 

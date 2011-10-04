@@ -23,17 +23,6 @@ int main()
 	Poppler::Page * page = doc->page(0);
 	PROFILING("Load page");
 
-	qDebug() << "";
-	qDebug() << "Render full page";
-	qDebug() << "[dpi] [ms]";
-
-	for (dpi = 100; dpi <= 1200; dpi += 100) {
-		stopWatch.restart();
-		QImage tmp;
-		tmp = page->renderToImage(dpi, dpi);
-		qDebug() << dpi << stopWatch.restart();
-	}
-
 	int w, h;
 	int x, y;
 //	w = page->pageSize().width() * 100 / 72;
@@ -50,6 +39,17 @@ int main()
 		stopWatch.restart();
 		QImage tmp;
 		tmp = page->renderToImage(dpi, dpi, x, y, w, h);
+		qDebug() << dpi << stopWatch.restart();
+	}
+
+	qDebug() << "";
+	qDebug() << "Render full page";
+	qDebug() << "[dpi] [ms]";
+
+	for (dpi = 100; dpi <= 1200; dpi += 100) {
+		stopWatch.restart();
+		QImage tmp;
+		tmp = page->renderToImage(dpi, dpi);
 		qDebug() << dpi << stopWatch.restart();
 	}
 
