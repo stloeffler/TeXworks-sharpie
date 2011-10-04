@@ -40,6 +40,8 @@ int main()
 		QImage tmp;
 		tmp = page->renderToImage(dpi, dpi, x, y, w, h);
 		qDebug() << dpi << stopWatch.restart();
+		
+		tmp.save(QString("poppler_partial_%1dpi.png").arg(dpi));
 	}
 
 	qDebug() << "";

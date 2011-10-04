@@ -81,6 +81,7 @@ int main()
 		}
 
 		qDebug() << dpi << stopWatch.restart();
+		tmp.save(QString("mupdf_partial_%1dpi.png").arg(dpi));
 	}
 
 	qDebug() << "";

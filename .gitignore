@@ -1,3 +1,5 @@
 *.o
 speed-test-poppler
 speed-test-mupdf
+mupdf_partial_*dpi.png
+poppler_partial_*dpi.png
