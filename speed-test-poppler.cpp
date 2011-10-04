@@ -15,6 +15,9 @@ int main()
 	stopWatch.start();
 
 	Poppler::Document * doc = Poppler::Document::load("pgfmanual.pdf");
+	doc->setRenderBackend(Poppler::Document::SplashBackend);
+	doc->setRenderHint(Poppler::Document::Antialiasing);
+	doc->setRenderHint(Poppler::Document::TextAntialiasing);
 	PROFILING("Load document");
 
 	Poppler::Page * page = doc->page(0);
