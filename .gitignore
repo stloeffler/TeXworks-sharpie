@@ -1,2 +1,3 @@
 *.o
 speed-test-poppler
+speed-test-mupdf
