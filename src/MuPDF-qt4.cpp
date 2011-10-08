@@ -12,6 +12,7 @@ struct fz_qt4_draw_device_s
 	fz_glyph_cache *cache;
 
 	QPainter *painter;
+	QStack<QPainterPath> * clipPaths; // needs to be a pointer; the object itself apparently can't live in a struct like this
 };
 
 /*
@@ -292,6 +293,8 @@ void print_fz_matrix(fz_matrix m)
 void fz_qt4_draw_free_user(void * user)
 {
 	fz_qt4_draw_device * ddev = (fz_qt4_draw_device*)user;
+	if (ddev->clipPaths)
+		delete clipPaths;
 	fz_free(ddev);
 }
 
@@ -299,7 +302,9 @@ void fz_qt4_draw_free_user(void * user)
 void fz_qt4_draw_fill_path(void *user, fz_path *path, int even_odd, fz_matrix ctm,
 	fz_colorspace *colorspace, float *color, float alpha)
 {
+#ifdef MU_DEBUG
 	qDebug() << "fill_path";
+#endif
 	fz_qt4_draw_device * ddev = (fz_qt4_draw_device*)user;
 	ddev->painter->setTransform(fz_matrix_to_QTransform(ctm));
 	
@@ -321,7 +326,9 @@ void fz_qt4_draw_fill_path(void *user, fz_path *path, int even_odd, fz_matrix ct
 void fz_qt4_draw_stroke_path(void *user, fz_path *path, fz_stroke_state *stroke, fz_matrix ctm,
 	fz_colorspace *colorspace, float *color, float alpha)
 {
+#ifdef MU_DEBUG
 	qDebug() << "stroke_path";
+#endif
 	fz_qt4_draw_device * ddev = (fz_qt4_draw_device*)user;
 	QPen pen(fz_color_to_QColor(colorspace, color, alpha));
 	
@@ -364,7 +371,7 @@ void fz_qt4_draw_stroke_path(void *user, fz_path *path, fz_stroke_state *stroke,
 //		fz_knockout_end(dev);
 }
 
-// Fill clip path with shade (?)
+// Fill (clip path) with shade (?)
 void fz_qt4_draw_fill_shade(void *user, fz_shade *shade, fz_matrix ctm, float alpha)
 {
 	// **TODO:** Implement!
@@ -416,21 +423,25 @@ struct fz_shade_s
 //		fz_knockout_end(dev);
 }
 
+////////////////////////////////////////////////////////////////////////////////
+// Clipping
+////////////////////////////////////////////////////////////////////////////////
+
 // New clip path from filled path (?)
 void fz_qt4_draw_clip_path(void *user, fz_path *path, fz_rect *rect, int even_odd, fz_matrix ctm)
 {
-	// **TODO:** Implement!
-	qDebug() << "clip_path [TODO]";
+	qDebug() << "clip_path";
 	fz_qt4_draw_device * ddev = (fz_qt4_draw_device*)user;
-	
-	qDebug() << fz_path_to_QPainterPath(path, even_odd);
+	ddev->clipPaths->push(ddev->painter->clipPath());
+	ddev->painter->setClipPath(fz_path_to_QPainterPath(path, even_odd));
 }
 
 // New clip path from path outline (?)
 void fz_qt4_draw_clip_stroke_path(void *user, fz_path *path, fz_rect *rect, fz_stroke_state *stroke, fz_matrix ctm)
 {
-	// **TODO:** Implement!
+#ifdef MU_DEBUG
 	qDebug() << "clip_stroke_path [TODO]";
+#endif
 	fz_qt4_draw_device * ddev = (fz_qt4_draw_device*)user;
 	
 	qDebug() << fz_path_to_QPainterPath(path, 0);
@@ -439,10 +450,24 @@ void fz_qt4_draw_clip_stroke_path(void *user, fz_path *path, fz_rect *rect, fz_s
 
 void fz_qt4_draw_pop_clip(void *user)
 {
-	// **TODO:** Implement!
-	qDebug() << "pop_clip [TODO]";
+#ifdef MU_DEBUG
+	qDebug() << "pop_clip";
+#endif
 	fz_qt4_draw_device * ddev = (fz_qt4_draw_device*)user;
+	QPainterPath clipPath;
+	
+	if (!ddev->clipPaths->isEmpty())
+		clipPath = ddev->clipPaths->pop();
+	
+	if (clipPath.isEmpty())
+		ddev->painter->setClipping(false);
+	else
+		ddev->painter->setClipPath(clipPath);
 }
+
+////////////////////////////////////////////////////////////////////////////////
+// Text
+////////////////////////////////////////////////////////////////////////////////
 
 void fz_qt4_draw_fill_text(void *user, fz_text *text, fz_matrix ctm,
 	fz_colorspace *colorspace, float *color, float alpha)
@@ -459,8 +484,6 @@ void fz_qt4_draw_fill_text(void *user, fz_text *text, fz_matrix ctm,
 
 	ddev->painter->setBrush(QBrush(fz_color_to_QColor(colorspace, color, alpha)));
 	ddev->painter->setPen(QPen(Qt::NoPen));
-
-	qDebug() << text->font->name;
 
 	if (text->font->ft_face) {
 		// **TODO:** see <mupdf>/fitz/res_font.c @ fz_render_ft_glyph
@@ -512,8 +535,6 @@ void fz_qt4_draw_fill_text(void *user, fz_text *text, fz_matrix ctm,
 	}
 	else
 		qDebug() << "assert: uninitialized font structure";
-
-	print_fz_matrix(text->trm);
 
 /*
 struct fz_text_s
@@ -574,6 +595,7 @@ fz_device *fz_new_qt4_draw_device(fz_glyph_cache *cache, QPainter * painter)
 	fz_device *dev;
 	fz_qt4_draw_device *ddev = (fz_qt4_draw_device*)fz_malloc(sizeof(fz_qt4_draw_device));
 	ddev->painter = painter;
+	ddev->clipPaths = new QStack<QPainterPath>();
 
 	qDebug() << "new device";
 
