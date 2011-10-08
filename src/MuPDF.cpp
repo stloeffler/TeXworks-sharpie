@@ -13,6 +13,7 @@
  */
 
 #include <MuPDF.hpp>
+#include <MuPDF-qt4.hpp>
 
 namespace MuPDF
 {
@@ -93,7 +94,7 @@ QImage Page::renderToImage(double xres, double yres)
   // Set up the transformation matrix for the page. Really, we just start with
   // an identity matrix and scale it using the xres, yres inputs.
   fz_matrix render_trans = fz_identity;
-  render_trans = fz_concat(render_trans, fz_translate(0, -_bbox.y1));
+//  render_trans = fz_concat(render_trans, fz_translate(0, -_bbox.y1));
   render_trans = fz_concat(render_trans, fz_scale(xres / 72.0f, yres / 72.0f));
   render_trans = fz_concat(render_trans, fz_rotate(_rotate));
 
@@ -103,20 +104,24 @@ QImage Page::renderToImage(double xres, double yres)
   fz_pixmap *mu_image = fz_new_pixmap_with_rect(fz_device_bgr, render_bbox);
   // Flush to white.
   fz_clear_pixmap_with_color(mu_image, 255);
-  fz_device *renderer = fz_new_draw_device(_parent->_glyph_cache, mu_image);
+  
+  QImage rendered_image(render_bbox.x1 - render_bbox.x0, render_bbox.y1 - render_bbox.y0, QImage::Format_ARGB32);
+  QPainter painter;
+  
+  fz_device *renderer = fz_new_qt4_draw_device(_parent->_glyph_cache, &painter);
 
-  // Actually render the page.
+  // Actually start rendering the page.
+  painter.begin(&rendered_image);
+  painter.setRenderHint(QPainter::Antialiasing);
+
+  // fill page with white background
+  painter.fillRect(rendered_image.rect(), Qt::white);
+
   fz_execute_display_list(_page, renderer, render_trans, render_bbox);
-
-  // Create a QImage that shares data with the fz_pixmap.
-  QImage tmp_image(mu_image->samples, mu_image->w, mu_image->h, QImage::Format_ARGB32);
-  // Now create a copy with its own data that can exist outside this function
-  // call.
-  QImage rendered_image = tmp_image.copy();
+  painter.end();
 
   // Dispose of unneeded items.
   fz_free_device(renderer);
-  fz_drop_pixmap(mu_image);
 
   return rendered_image.mirrored();
 }

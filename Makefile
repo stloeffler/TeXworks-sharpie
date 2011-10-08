@@ -8,15 +8,16 @@ CXXFLAGS += -DDEBUG -DMU_DEBUG
 LDFLAGS := $(shell pkg-config freetype2 poppler poppler-qt4 QtCore QtGui QtXml --libs)
 # MuPDF libraries. MuPDF builds as a static lib, so its dependencies have to be
 # explicitly linked.
-LDFLAGS += -lfitz -lmupdf -ljbig2dec -ljpeg -lopenjpeg -lz
+#LDFLAGS += -lfitz -lmupdf -ljbig2dec -ljpeg -lopenjpeg -lz
 
 VPATH = src
-SRCS := main.cpp PDFViewer.cpp moc_PDFViewer.cpp PDFDocumentView.cpp moc_PDFDocumentView.cpp MuPDF.cpp
+SRCS := main.cpp PDFViewer.cpp moc_PDFViewer.cpp PDFDocumentView.cpp moc_PDFDocumentView.cpp MuPDF.cpp MuPDF-qt4.cpp
+OBJS = $(SRCS:.cpp=.o)
 
 all: pdf_viewer
 
-pdf_viewer: $(SRCS:.cpp=.o) icons.cpp
-	$(CXX) $(CXXFLAGS) $(LDFLAGS) -o pdf_viewer $^
+pdf_viewer: $(OBJS) icons.cpp
+	$(CXX) $(CXXFLAGS) $(LDFLAGS) -o pdf_viewer $^ -lmupdf -lfitz -ljbig2dec -ljpeg -lopenjpeg -lz
 
 %.cpp : %.qrc
 	rcc -o $@ $<
@@ -28,7 +29,7 @@ moc_%.cpp: %.h
 	$(CXX) $(CXXFLAGS) -c $<
 
 clean :
-	git clean -fdx
+	rm -f pdf_viewer $(OBJS) icons.cpp
 
 docs :
 	cd docs && rake
