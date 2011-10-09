@@ -294,7 +294,7 @@ void fz_qt4_draw_free_user(void * user)
 {
 	fz_qt4_draw_device * ddev = (fz_qt4_draw_device*)user;
 	if (ddev->clipPaths)
-		delete clipPaths;
+		delete ddev->clipPaths;
 	fz_free(ddev);
 }
 
@@ -312,6 +312,7 @@ void fz_qt4_draw_fill_path(void *user, fz_path *path, int even_odd, fz_matrix ct
 //	if (dev->blendmode & FZ_BLEND_KNOCKOUT)
 //		fz_knockout_begin(dev);
 
+	qDebug() << alpha << color[3];
 	ddev->painter->setBrush(QBrush(fz_color_to_QColor(colorspace, color, alpha)));
 	ddev->painter->setPen(QPen(Qt::NoPen));
 	
@@ -379,20 +380,66 @@ void fz_qt4_draw_fill_shade(void *user, fz_shade *shade, fz_matrix ctm, float al
 	fz_qt4_draw_device * ddev = (fz_qt4_draw_device*)user;
 	ddev->painter->setTransform(fz_matrix_to_QTransform(ctm));
 
+	// Get the rectangle to paint in
+	// Note: controlPointRect() is significantly faster than boundingRect(),
+	// according to Qt docs
+	QRectF rect(ddev->painter->clipPath().controlPointRect());
+	if (rect.isEmpty()) {
+		// Without valid clipping path, take the whole page rect
+		QRectF deviceRect(0, 0, ddev->painter->device()->width(), ddev->painter->device()->height());
+		rect = fz_matrix_to_QTransform(ctm).mapRect(ddev->painter->deviceTransform().inverted().mapRect(deviceRect));
+	}
+
 	// **TODO:** knockout
 //	if (dev->blendmode & FZ_BLEND_KNOCKOUT)
 //		fz_knockout_begin(dev);
 
-/*
-	ddev->painter->setBrush(QBrush(fz_color_to_QColor(colorspace, color, alpha)));
-	ddev->painter->setPen(QPen(Qt::NoPen));
-	
-	ddev->painter->drawPath(fz_path_to_QPainterPath(path, even_odd));
-*/
+	// **TODO:** Use shade->bbox, shade->matrix, shade->extend
+	if (shade->use_background)
+		ddev->painter->fillRect(rect, fz_color_to_QColor(shade->colorspace, shade->background, alpha));
 
-	qDebug() << shade->mesh_len;
-	for (int i = 0; i < shade->mesh_len; ++i)
-		qDebug() << shade->mesh[i];
+	// **TODO:** Check if shading is really done only if shade->use_function == 1
+	// (see <mupdf>/draw/draw_mesh.c @ fz_paint_shade()
+	if (!shade->use_function)
+		return;
+
+//return;
+
+	QTransform t(fz_matrix_to_QTransform(shade->matrix));
+	switch (shade->type) {
+		case FZ_LINEAR:
+			{
+				QLinearGradient gradient;
+				for (int i = 0; i < 256; ++i)
+					gradient.setColorAt(i / 255., fz_color_to_QColor(shade->colorspace, shade->function[i], alpha));
+				gradient.setStart(t.map(QPointF(shade->mesh[0], shade->mesh[1])));
+				gradient.setFinalStop(t.map(QPointF(shade->mesh[3], shade->mesh[4])));
+				// **TODO:** shade->extend == 0
+				ddev->painter->fillRect(rect, gradient);
+			}
+			break;
+		case FZ_RADIAL:
+			{
+				QRadialGradient gradient;
+				for (int i = 0; i < 256; ++i)
+					gradient.setColorAt(i / 255., fz_color_to_QColor(shade->colorspace, shade->function[i], alpha));
+
+				// **TODO:** Handle radial shading that is not rotationally
+				// symmetric (i.e., scaled differently in x and y (elliptical
+				// pattern, possibly rotated))
+
+				gradient.setFocalPoint(t.map(QPointF(shade->mesh[0], shade->mesh[1])));
+				gradient.setCenter(t.map(QPointF(shade->mesh[3], shade->mesh[4])));
+				gradient.setRadius(shade->mesh[5]);
+
+				// **TODO:** shade->extend == 0
+				ddev->painter->fillRect(rect, gradient);
+			}
+			break;
+		case FZ_MESH:
+			// **TODO:** Mesh shading
+			break;
+	}
 
 /*
 struct fz_shade_s
@@ -432,8 +479,23 @@ void fz_qt4_draw_clip_path(void *user, fz_path *path, fz_rect *rect, int even_od
 {
 	qDebug() << "clip_path";
 	fz_qt4_draw_device * ddev = (fz_qt4_draw_device*)user;
-	ddev->clipPaths->push(ddev->painter->clipPath());
-	ddev->painter->setClipPath(fz_path_to_QPainterPath(path, even_odd));
+	// Always push & pop paths without transformation or else recursive calls
+	// would mess transformations up real bad
+	ddev->painter->resetTransform();
+	if (ddev->painter->hasClipping())
+		ddev->clipPaths->push(ddev->painter->clipPath());
+	else
+		ddev->clipPaths->push(QPainterPath());
+	QTransform t(fz_matrix_to_QTransform(ctm));
+	
+	// **TODO:** rect
+	
+ddev->painter->setClipping(false);
+ddev->painter->setPen(QPen(2));
+ddev->painter->setBrush(Qt::NoBrush);
+ddev->painter->drawPath(t.map(fz_path_to_QPainterPath(path, even_odd)));
+	
+	ddev->painter->setClipPath(t.map(fz_path_to_QPainterPath(path, even_odd)));
 }
 
 // New clip path from path outline (?)
@@ -458,12 +520,69 @@ void fz_qt4_draw_pop_clip(void *user)
 	
 	if (!ddev->clipPaths->isEmpty())
 		clipPath = ddev->clipPaths->pop();
+	else
+		qDebug() << "[WAR] Clipping stack empty";
 	
 	if (clipPath.isEmpty())
 		ddev->painter->setClipping(false);
-	else
+	else {
+		// Always push & pop paths without transformation or else recursive calls
+		// would mess transformations up real bad
+		ddev->painter->resetTransform();
 		ddev->painter->setClipPath(clipPath);
+	}
 }
+
+void fz_qt4_draw_clip_text(void *user, fz_text *text, fz_matrix ctm, int accumulate)
+{
+	// **TODO:** Implement!
+	qDebug() << "clip_text [TODO]";
+	fz_qt4_draw_device * ddev = (fz_qt4_draw_device*)user;
+}
+
+void fz_qt4_draw_clip_stroke_text(void *user, fz_text *text, fz_stroke_state *stroke, fz_matrix ctm)
+{
+	// **TODO:** Implement!
+	qDebug() << "clip_stroke_text [TODO]";
+	fz_qt4_draw_device * ddev = (fz_qt4_draw_device*)user;
+}
+
+void fz_qt4_draw_clip_image_mask(void *user, fz_pixmap *image, fz_rect *rect, fz_matrix ctm)
+{
+	// **TODO:** Implement!
+	qDebug() << "clip_image_mask [TODO]";
+	fz_qt4_draw_device * ddev = (fz_qt4_draw_device*)user;
+}
+
+void fz_qt4_draw_begin_mask(void *user, fz_rect area, int luminosity, fz_colorspace *colorspace, float *bc)
+{
+	// **TODO:** Implement!
+	qDebug() << "begin_mask [TODO]";
+	fz_qt4_draw_device * ddev = (fz_qt4_draw_device*)user;
+}
+
+void fz_qt4_draw_end_mask(void *user)
+{
+	// **TODO:** Implement!
+	qDebug() << "end_mask [TODO]";
+	fz_qt4_draw_device * ddev = (fz_qt4_draw_device*)user;
+}
+
+void fz_qt4_draw_begin_group(void *user, fz_rect area, int isolated, int knockout, int blendmode, float alpha)
+{
+	// **TODO:** Implement!
+	qDebug() << "begin_group [TODO]";
+	fz_qt4_draw_device * ddev = (fz_qt4_draw_device*)user;
+}
+
+void fz_qt4_draw_end_group(void *user)
+{
+	// **TODO:** Implement!
+	qDebug() << "end_group [TODO]";
+	fz_qt4_draw_device * ddev = (fz_qt4_draw_device*)user;
+}
+
+
 
 ////////////////////////////////////////////////////////////////////////////////
 // Text
@@ -473,7 +592,7 @@ void fz_qt4_draw_fill_text(void *user, fz_text *text, fz_matrix ctm,
 	fz_colorspace *colorspace, float *color, float alpha)
 {
 	// **TODO:** Implement!
-	qDebug() << "draw_fill_text [TODO]";
+//	qDebug() << "draw_fill_text [TODO]";
 	fz_qt4_draw_device * ddev = (fz_qt4_draw_device*)user;
 	ddev->painter->setTransform(fz_matrix_to_QTransform(ctm));
 //	ddev->painter->setTransform(fz_matrix_to_QTransform(text->trm), true);
@@ -609,27 +728,26 @@ fz_device *fz_new_qt4_draw_device(fz_glyph_cache *cache, QPainter * painter)
 	dev->clip_stroke_path = fz_qt4_draw_clip_stroke_path;
 
 	dev->fill_text = fz_qt4_draw_fill_text;
-/*	dev->stroke_text = fz_qt4_draw_stroke_text;
+//	dev->stroke_text = fz_qt4_draw_stroke_text;
 	dev->clip_text = fz_qt4_draw_clip_text;
 	dev->clip_stroke_text = fz_qt4_draw_clip_stroke_text;
-	dev->ignore_text = fz_qt4_draw_ignore_text;
+//	dev->ignore_text = fz_qt4_draw_ignore_text;
 
-	dev->fill_image_mask = fz_qt4_draw_fill_image_mask;
+//	dev->fill_image_mask = fz_qt4_draw_fill_image_mask;
 	dev->clip_image_mask = fz_qt4_draw_clip_image_mask;
-	dev->fill_image = fz_qt4_draw_fill_image;
-*/
+//	dev->fill_image = fz_qt4_draw_fill_image;
+
 	dev->fill_shade = fz_qt4_draw_fill_shade;
 	dev->pop_clip = fz_qt4_draw_pop_clip;
-/*
 
 	dev->begin_mask = fz_qt4_draw_begin_mask;
 	dev->end_mask = fz_qt4_draw_end_mask;
 	dev->begin_group = fz_qt4_draw_begin_group;
 	dev->end_group = fz_qt4_draw_end_group;
 
-	dev->begin_tile = fz_qt4_draw_begin_tile;
-	dev->end_tile = fz_qt4_draw_end_tile;
-*/
+//	dev->begin_tile = fz_qt4_draw_begin_tile;
+//	dev->end_tile = fz_qt4_draw_end_tile;
+
 	return dev;
 }
 
