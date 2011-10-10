@@ -45,6 +45,18 @@ int main()
 	}
 
 	qDebug() << "";
+	qDebug() << "Render time per pixel for (a x a) px square @ 300dpi";
+	qDebug() << "[a] [ns/px]";
+
+	int a;
+	for (a = 50; a <= 2000; a += 50) {
+		stopWatch.restart();
+		QImage tmp;
+		tmp = page->renderToImage(300, 300, 0, 0, a, a);
+		qDebug() << a << 1000. * stopWatch.restart() / ((float)a * a);
+	}
+
+	qDebug() << "";
 	qDebug() << "Render full page";
 	qDebug() << "[dpi] [ms]";
 
