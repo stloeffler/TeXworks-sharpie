@@ -6,11 +6,32 @@ namespace MuPDF
 {
 
 typedef struct fz_qt4_draw_device_s fz_qt4_draw_device;
+typedef struct draw_surface_s draw_surface;
+
+struct draw_surface_s
+{
+	enum Type { BASE, CLIP_PATH, IMAGE_MASK, TILING } type;
+	QPainter * painter;
+
+	// for CLIP_PATH
+	QPainterPath clipPath;
+	
+	// for IMAGE_MASK
+	QImage * mask;
+
+	// for TILLING
+	float xStep, yStep;
+	QRectF area;
+};
 
 struct fz_qt4_draw_device_s
 {
 	fz_glyph_cache *cache;
 
+	draw_surface * surface;
+	QStack<draw_surface *> * surfaceStack;
+
+/*
 	QPainter * painter;
 
 	// FIXME: should be nest-able in case we have tiles within tiles?
@@ -20,6 +41,7 @@ struct fz_qt4_draw_device_s
 	
 	QStack<QPainter*> * painterStack;
 	QStack<QPainterPath> * clipPaths; // needs to be a pointer; the object itself apparently can't live in a struct like this
+*/
 };
 
 /*
@@ -375,8 +397,11 @@ QList<QPainterPath> render_text(fz_text *text)
 void fz_qt4_draw_free_user(void * user)
 {
 	fz_qt4_draw_device * ddev = (fz_qt4_draw_device*)user;
-	if (ddev->clipPaths)
-		delete ddev->clipPaths;
+	// **TODO:** If the stack is not empty, each individual surface should be
+	// freed (e.g., the QPainter or the attached QPaintDevice, unless they are
+	// shared with BASE)
+	if (ddev->surfaceStack)
+		delete ddev->surfaceStack;
 	fz_free(ddev);
 }
 
@@ -389,23 +414,23 @@ void fz_qt4_draw_fill_path(void *user, fz_path *path, int even_odd, fz_matrix ct
 #endif
 
 	fz_qt4_draw_device * ddev = (fz_qt4_draw_device*)user;
-	ddev->painter->save();
-	ddev->painter->setTransform(fz_matrix_to_QTransform(ctm));
+	ddev->surface->painter->save();
+	ddev->surface->painter->setTransform(fz_matrix_to_QTransform(ctm));
 	
 	// **TODO:** knockout
 //	if (dev->blendmode & FZ_BLEND_KNOCKOUT)
 //		fz_knockout_begin(dev);
 
-	ddev->painter->setBrush(QBrush(fz_color_to_QColor(colorspace, color, alpha)));
-	ddev->painter->setPen(QPen(Qt::NoPen));
+	ddev->surface->painter->setBrush(QBrush(fz_color_to_QColor(colorspace, color, alpha)));
+	ddev->surface->painter->setPen(QPen(Qt::NoPen));
 	
-	ddev->painter->drawPath(fz_path_to_QPainterPath(path, even_odd));
+	ddev->surface->painter->drawPath(fz_path_to_QPainterPath(path, even_odd));
 	
 	// **TODO:** knockout
 //	if (dev->blendmode & FZ_BLEND_KNOCKOUT)
 //		fz_knockout_end(dev);
 
-	ddev->painter->restore();
+	ddev->surface->painter->restore();
 }
 
 QPen fz_stroke_state_to_QPen(fz_stroke_state *stroke, fz_colorspace *colorspace, float *color, float alpha)
@@ -486,19 +511,19 @@ void fz_qt4_draw_stroke_path(void *user, fz_path *path, fz_stroke_state *stroke,
 //	if (dev->blendmode & FZ_BLEND_KNOCKOUT)
 //		fz_knockout_begin(dev);
 
-	ddev->painter->save();
-	ddev->painter->setTransform(fz_matrix_to_QTransform(ctm));
+	ddev->surface->painter->save();
+	ddev->surface->painter->setTransform(fz_matrix_to_QTransform(ctm));
 
-	ddev->painter->setBrush(Qt::NoBrush);
-	ddev->painter->setPen(fz_stroke_state_to_QPen(stroke, colorspace, color, alpha));
+	ddev->surface->painter->setBrush(Qt::NoBrush);
+	ddev->surface->painter->setPen(fz_stroke_state_to_QPen(stroke, colorspace, color, alpha));
 	
-	ddev->painter->drawPath(fz_path_to_QPainterPath(path, 0));
+	ddev->surface->painter->drawPath(fz_path_to_QPainterPath(path, 0));
 	
 	// **TODO:** knockout
 //	if (dev->blendmode & FZ_BLEND_KNOCKOUT)
 //		fz_knockout_end(dev);
 
-	ddev->painter->restore();
+	ddev->surface->painter->restore();
 }
 
 // Fill (clip path) with shade (?)
@@ -512,16 +537,16 @@ void fz_qt4_draw_fill_shade(void *user, fz_shade *shade, fz_matrix ctm, float al
 	// **TODO:** Implement!
 	qDebug() << "fill_shade [TODO]";
 	fz_qt4_draw_device * ddev = (fz_qt4_draw_device*)user;
-	ddev->painter->setTransform(fz_matrix_to_QTransform(ctm));
+	ddev->surface->painter->setTransform(fz_matrix_to_QTransform(ctm));
 
 	// Get the rectangle to paint in
 	// Note: controlPointRect() is significantly faster than boundingRect(),
 	// according to Qt docs
-	QRectF rect(ddev->painter->clipPath().controlPointRect());
+	QRectF rect(ddev->surface->painter->clipPath().controlPointRect());
 	if (rect.isEmpty()) {
 		// Without valid clipping path, take the whole page rect
-		QRectF deviceRect(0, 0, ddev->painter->device()->width(), ddev->painter->device()->height());
-		rect = fz_matrix_to_QTransform(ctm).mapRect(ddev->painter->deviceTransform().inverted().mapRect(deviceRect));
+		QRectF deviceRect(0, 0, ddev->surface->painter->device()->width(), ddev->surface->painter->device()->height());
+		rect = fz_matrix_to_QTransform(ctm).mapRect(ddev->surface->painter->deviceTransform().inverted().mapRect(deviceRect));
 	}
 
 	// **TODO:** knockout
@@ -530,7 +555,7 @@ void fz_qt4_draw_fill_shade(void *user, fz_shade *shade, fz_matrix ctm, float al
 
 	// **TODO:** Use shade->bbox, shade->matrix, shade->extend
 	if (shade->use_background)
-		ddev->painter->fillRect(rect, fz_color_to_QColor(shade->colorspace, shade->background, alpha));
+		ddev->surface->painter->fillRect(rect, fz_color_to_QColor(shade->colorspace, shade->background, alpha));
 
 	// **TODO:** Check if shading is really done only if shade->use_function == 1
 	// (see <mupdf>/draw/draw_mesh.c @ fz_paint_shade()
@@ -562,7 +587,7 @@ void fz_qt4_draw_fill_shade(void *user, fz_shade *shade, fz_matrix ctm, float al
 					
 				gradient.setStart(t.map(QPointF(shade->mesh[0], shade->mesh[1])));
 				gradient.setFinalStop(t.map(QPointF(shade->mesh[3], shade->mesh[4])));
-				ddev->painter->fillRect(rect, gradient);
+				ddev->surface->painter->fillRect(rect, gradient);
 			}
 			break;
 		case FZ_RADIAL:
@@ -592,7 +617,7 @@ void fz_qt4_draw_fill_shade(void *user, fz_shade *shade, fz_matrix ctm, float al
 				gradient.setCenter(t.map(QPointF(shade->mesh[3], shade->mesh[4])));
 				gradient.setRadius(shade->mesh[5]);
 
-				ddev->painter->fillRect(rect, gradient);
+				ddev->surface->painter->fillRect(rect, gradient);
 			}
 			break;
 		case FZ_MESH:
@@ -641,12 +666,15 @@ void fz_qt4_draw_clip_path(void *user, fz_path *path, fz_rect *rect, int even_od
 	fz_qt4_draw_device * ddev = (fz_qt4_draw_device*)user;
 	// Always push & pop paths without transformation or else recursive calls
 	// would mess transformations up real bad
-	ddev->painter->resetTransform();
-	if (ddev->painter->hasClipping())
-		ddev->clipPaths->push(ddev->painter->clipPath());
-	else
-		ddev->clipPaths->push(QPainterPath());
+	ddev->surface->painter->resetTransform();
+
+	draw_surface * oldSurface = ddev->surface;
+	ddev->surfaceStack->push(oldSurface);
+	ddev->surface = new draw_surface;
+	ddev->surface->painter = oldSurface->painter;
+	ddev->surface->type = draw_surface::CLIP_PATH;
 	QTransform t(fz_matrix_to_QTransform(ctm));
+	
 	
 	// **TODO:** rect
 /*
@@ -666,12 +694,14 @@ void fz_qt4_draw_clip_path(void *user, fz_path *path, fz_rect *rect, int even_od
 	}
 #endif
 */
-	ddev->painter->setClipPath(t.map(fz_path_to_QPainterPath(path, even_odd)), Qt::IntersectClip);
+	ddev->surface->painter->setClipPath(t.map(fz_path_to_QPainterPath(path, even_odd)), Qt::IntersectClip);
+	ddev->surface->clipPath = ddev->surface->painter->clipPath();
 }
 
 // New clip path from path outline (?)
 void fz_qt4_draw_clip_stroke_path(void *user, fz_path *path, fz_rect *rect, fz_stroke_state *stroke, fz_matrix ctm)
 {
+	// **TODO:** Is this actually possible in PDFs?
 #ifdef MU_DEBUG
 	qDebug() << "clip_stroke_path [TODO]";
 #endif
@@ -692,18 +722,25 @@ void fz_qt4_draw_pop_clip(void *user)
 	fz_qt4_draw_device * ddev = (fz_qt4_draw_device*)user;
 	QPainterPath clipPath;
 	
-	if (!ddev->clipPaths->isEmpty())
-		clipPath = ddev->clipPaths->pop();
-	else
+	if (ddev->surfaceStack->isEmpty()) {
 		qDebug() << "[WAR] Clipping stack empty";
+		return;
+	}
+	if (ddev->surface->type != draw_surface::CLIP_PATH) {
+		qDebug() << "[WAR] PopClip without PushClip";
+		return;
+	}
 	
-	if (clipPath.isEmpty())
-		ddev->painter->setClipping(false);
+	delete ddev->surface;
+	ddev->surface = ddev->surfaceStack->pop();
+	
+	if (ddev->surface->clipPath.isEmpty())
+		ddev->surface->painter->setClipping(false);
 	else {
 		// Always push & pop paths without transformation or else recursive calls
 		// would mess transformations up real bad
-		ddev->painter->resetTransform();
-		ddev->painter->setClipPath(clipPath);
+		ddev->surface->painter->resetTransform();
+		ddev->surface->painter->setClipPath(ddev->surface->clipPath);
 	}
 }
 
@@ -713,11 +750,13 @@ void fz_qt4_draw_clip_text(void *user, fz_text *text, fz_matrix ctm, int accumul
 	fz_qt4_draw_device * ddev = (fz_qt4_draw_device*)user;
 	// Always push & pop paths without transformation or else recursive calls
 	// would mess transformations up real bad
-	ddev->painter->resetTransform();
-	if (ddev->painter->hasClipping())
-		ddev->clipPaths->push(ddev->painter->clipPath());
-	else
-		ddev->clipPaths->push(QPainterPath());
+	draw_surface * oldSurface = ddev->surface;
+	ddev->surface->painter->resetTransform();
+	ddev->surfaceStack->push(oldSurface);
+	
+	ddev->surface = new draw_surface;
+	ddev->surface->painter = oldSurface->painter;
+	ddev->surface->type = draw_surface::CLIP_PATH;
 	QTransform t(fz_matrix_to_QTransform(ctm));
 	
 	// **TODO:** accumulate
@@ -745,12 +784,13 @@ void fz_qt4_draw_clip_text(void *user, fz_text *text, fz_matrix ctm, int accumul
 	foreach (QPainterPath textPP, textPPs)
 		clipPath.addPath(textPP);
 
-	ddev->painter->setClipPath(t.map(clipPath), Qt::IntersectClip);
+	ddev->surface->painter->setClipPath(t.map(clipPath), Qt::IntersectClip);
+	ddev->surface->clipPath = ddev->surface->painter->clipPath();
 }
 
 void fz_qt4_draw_clip_stroke_text(void *user, fz_text *text, fz_stroke_state *stroke, fz_matrix ctm)
 {
-	// **TODO:** Implement!
+	// **TODO:** Is this actually possible in PDFs?
 	qDebug() << "clip_stroke_text [TODO]";
 //	fz_qt4_draw_device * ddev = (fz_qt4_draw_device*)user;
 
@@ -761,7 +801,7 @@ void fz_qt4_draw_clip_image_mask(void *user, fz_pixmap *image, fz_rect *rect, fz
 {
 	// **TODO:** Implement!
 	qDebug() << "clip_image_mask [TODO]";
-	fz_qt4_draw_device * ddev = (fz_qt4_draw_device*)user;
+//	fz_qt4_draw_device * ddev = (fz_qt4_draw_device*)user;
 }
 
 void fz_qt4_draw_fill_image(void *user, fz_pixmap *image, fz_matrix ctm, float alpha)
@@ -791,10 +831,10 @@ void fz_qt4_draw_fill_image(void *user, fz_pixmap *image, fz_matrix ctm, float a
 	// Note: the rotation/scale part works on normalized image coordinates and
 	// is upside-down (as usual with pdf coordinates)
 	
-	ddev->painter->save();
-	ddev->painter->setTransform(fz_matrix_to_QTransform(ctm).scale(1./image->w, -1./image->h).translate(0, -image->h));
-	ddev->painter->drawImage(QPointF(0, 0), tmp_image);
-	ddev->painter->restore();
+	ddev->surface->painter->save();
+	ddev->surface->painter->setTransform(fz_matrix_to_QTransform(ctm).scale(1./image->w, -1./image->h).translate(0, -image->h));
+	ddev->surface->painter->drawImage(QPointF(0, 0), tmp_image);
+	ddev->surface->painter->restore();
 
 //	if (dev->blendmode & FZ_BLEND_KNOCKOUT)
 //		fz_knockout_end(dev);
@@ -887,15 +927,15 @@ void fz_qt4_draw_fill_text(void *user, fz_text *text, fz_matrix ctm,
 #endif
 	fz_qt4_draw_device * ddev = (fz_qt4_draw_device*)user;
 
-	ddev->painter->save();
-	ddev->painter->setTransform(fz_matrix_to_QTransform(ctm));
+	ddev->surface->painter->save();
+	ddev->surface->painter->setTransform(fz_matrix_to_QTransform(ctm));
 
 	// **TODO:** knockout
 //	if (dev->blendmode & FZ_BLEND_KNOCKOUT)
 //		fz_knockout_begin(dev);
 
-	ddev->painter->setBrush(QBrush(fz_color_to_QColor(colorspace, color, alpha)));
-	ddev->painter->setPen(QPen(Qt::NoPen));
+	ddev->surface->painter->setBrush(QBrush(fz_color_to_QColor(colorspace, color, alpha)));
+	ddev->surface->painter->setPen(QPen(Qt::NoPen));
 
 /*
 	if (text->font->ft_face) {
@@ -981,7 +1021,7 @@ foreach (QPainterPath textPP, textPPs)
 
 	QList<QPainterPath> textPPs(render_text(text));
 	foreach (QPainterPath textPP, textPPs)
-		ddev->painter->drawPath(textPP);
+		ddev->surface->painter->drawPath(textPP);
 
 
 
@@ -1039,7 +1079,7 @@ struct fz_font_s
 };
 */
 
-	ddev->painter->restore();
+	ddev->surface->painter->restore();
 
 	
 	// **TODO:** knockout
@@ -1054,21 +1094,21 @@ void fz_qt4_draw_stroke_text(void *user, fz_text *text, fz_stroke_state *stroke,
 
 	fz_qt4_draw_device * ddev = (fz_qt4_draw_device*)user;
 
-	ddev->painter->save();
-	ddev->painter->setTransform(fz_matrix_to_QTransform(ctm));
+	ddev->surface->painter->save();
+	ddev->surface->painter->setTransform(fz_matrix_to_QTransform(ctm));
 
 	// **TODO:** knockout
 //	if (dev->blendmode & FZ_BLEND_KNOCKOUT)
 //		fz_knockout_begin(dev);
 
-	ddev->painter->setBrush(Qt::NoBrush);
-	ddev->painter->setPen(fz_stroke_state_to_QPen(stroke, colorspace, color, alpha));
+	ddev->surface->painter->setBrush(Qt::NoBrush);
+	ddev->surface->painter->setPen(fz_stroke_state_to_QPen(stroke, colorspace, color, alpha));
 
 	QList<QPainterPath> textPPs(render_text(text));
 	foreach (QPainterPath textPP, textPPs)
-		ddev->painter->drawPath(textPP);
+		ddev->surface->painter->drawPath(textPP);
 
-	ddev->painter->restore();
+	ddev->surface->painter->restore();
 
 	// **TODO:** knockout
 //	if (dev->blendmode & FZ_BLEND_KNOCKOUT)
@@ -1104,10 +1144,10 @@ void fz_qt4_draw_fill_image_mask(void *user, fz_pixmap *image, fz_matrix ctm,
 	// Set the transformation matrix
 	// Note: the rotation/scale part works on normalized image coordinates and
 	// is upside-down (as usual with pdf coordinates)
-	ddev->painter->save();
-	ddev->painter->setTransform(fz_matrix_to_QTransform(ctm).scale(1./image->w, -1./image->h).translate(0, -image->h));
-	ddev->painter->drawImage(QPointF(0, 0), tmp_image);
-	ddev->painter->restore();
+	ddev->surface->painter->save();
+	ddev->surface->painter->setTransform(fz_matrix_to_QTransform(ctm).scale(1./image->w, -1./image->h).translate(0, -image->h));
+	ddev->surface->painter->drawImage(QPointF(0, 0), tmp_image);
+	ddev->surface->painter->restore();
 	
 	delete[] data;
 }
@@ -1120,16 +1160,17 @@ void fz_qt4_draw_begin_tile(void *user, fz_rect area, fz_rect view, float xstep,
 	fz_bbox bbox;
 	
 
-	ddev->painter->save();
-	ddev->painter->setTransform(fz_matrix_to_QTransform(ctm));
+	ddev->surface->painter->save();
+	ddev->surface->painter->setTransform(fz_matrix_to_QTransform(ctm));
 
-	ddev->painterStack->push(ddev->painter);
-	ddev->painter = new QPainter();
+	ddev->surfaceStack->push(ddev->surface);
 	
-	// FIXME: These properties should probably be nestable
-	ddev->area = toRectF(area);
-	ddev->xStep = xstep;
-	ddev->yStep = ystep;
+	ddev->surface = new draw_surface;
+	ddev->surface->painter = new QPainter();
+	ddev->surface->type = draw_surface::TILING;
+	ddev->surface->area = toRectF(area);
+	ddev->surface->xStep = xstep;
+	ddev->surface->yStep = ystep;
 
 	bbox = fz_round_rect(fz_transform_rect(ctm, view));
 	
@@ -1140,7 +1181,7 @@ void fz_qt4_draw_begin_tile(void *user, fz_rect area, fz_rect view, float xstep,
 	// this is actually identical to Qt::transparent)
 	img->fill(QColor(255, 255, 255, 0));
 	
-	ddev->painter->begin(img);
+	ddev->surface->painter->begin(img);
 	// FIXME: There is a bug in mupdf when rendering tiles to fill text outlines
 }
 
@@ -1149,41 +1190,52 @@ void fz_qt4_draw_end_tile(void *user)
 	qDebug() << "draw_end_tile";
 	
 	fz_qt4_draw_device * ddev = (fz_qt4_draw_device*)user;
-	if (ddev->painterStack->isEmpty()) {
+	if (ddev->surfaceStack->isEmpty()) {
 		qDebug() << "[WAR] Painter stack empty";
 		return;
 	}
+	if (ddev->surface->type != draw_surface::TILING) {
+		qDebug() << "[WAR] EndTile without BeginTile";
+		return;
+	}
 	
-	QImage * img = static_cast<QImage*>(ddev->painter->device());
-	ddev->painter->end();
-	delete ddev->painter;
-	ddev->painter = ddev->painterStack->pop();
+	draw_surface * tilingSurface = ddev->surface;
+	
+	QImage * img = static_cast<QImage*>(tilingSurface->painter->device());
+	tilingSurface->painter->end();
+	delete tilingSurface->painter;
+	ddev->surface = ddev->surfaceStack->pop();
 	
 	if (!img)
 		return;
 
-	for (float y = ddev->area.top(); y < ddev->area.bottom(); y += ddev->yStep) {
-		for (float x = ddev->area.left(); x < ddev->area.right(); x += ddev->xStep) {
+	for (float y = tilingSurface->area.top(); y < tilingSurface->area.bottom(); y += tilingSurface->yStep) {
+		for (float x = tilingSurface->area.left(); x < tilingSurface->area.right(); x += tilingSurface->xStep) {
 			// Note: we need to specify the size explicitly, as it is already
 			// scaled to the final size; if we wouldn't do this, it would be
 			// transformed again according to ddev->painter->transform(), which
 			// we need to avoid
-			ddev->painter->drawImage(QRectF(x, y, ddev->xStep, ddev->yStep), *img);
+			ddev->surface->painter->drawImage(QRectF(x, y, tilingSurface->xStep, tilingSurface->yStep), *img);
 		}
 	}
-
-	ddev->painter->restore();
-
+	
+	delete tilingSurface;
 	delete img;
+
+	ddev->surface->painter->restore();
 }
 
 fz_device *fz_new_qt4_draw_device(fz_glyph_cache *cache, QPainter * painter)
 {
 	fz_device *dev;
 	fz_qt4_draw_device *ddev = (fz_qt4_draw_device*)fz_malloc(sizeof(fz_qt4_draw_device));
-	ddev->painter = painter;
-	ddev->clipPaths = new QStack<QPainterPath>();
-	ddev->painterStack = new QStack<QPainter*>();
+	ddev->surface = new draw_surface;
+	ddev->surface->type = draw_surface::BASE;
+	ddev->surface->painter = painter;
+
+//	ddev->clipPaths = new QStack<QPainterPath>();
+//	ddev->painterStack = new QStack<QPainter*>();
+	ddev->surfaceStack = new QStack<draw_surface*>();
 
 	qDebug() << "new device";
 
