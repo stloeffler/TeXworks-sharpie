@@ -18,11 +18,22 @@
 namespace MuPDF
 {
 
+class MuPDFLocaleResetter
+{
+  char * _locale;
+public:
+  MuPDFLocaleResetter() { _locale = setlocale(LC_NUMERIC, NULL); setlocale(LC_NUMERIC, "C"); }
+  ~MuPDFLocaleResetter() { setlocale(LC_NUMERIC, _locale); }
+};
+
+
 Document::Document(QString fileName):
   _pdf_data(NULL),
   _glyph_cache(fz_new_glyph_cache()),
   _numPages(-1)
 {
+  MuPDFLocaleResetter lr;
+
   // NOTE: The next two calls can fail---we need to check for that
   fz_stream *pdf_file = fz_open_file(fileName.toLocal8Bit().data());
   pdf_open_xref_with_stream(&_pdf_data, pdf_file, NULL);
