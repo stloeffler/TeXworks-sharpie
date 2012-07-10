@@ -12,6 +12,7 @@ struct draw_surface_s
 {
 	enum Type { BASE, CLIP_PATH, IMAGE_MASK, TILING } type;
 	QPainter * painter;
+	QTransform globalTransform;
 
 	// for CLIP_PATH
 	QPainterPath clipPath;
@@ -43,6 +44,21 @@ struct fz_qt4_draw_device_s
 	QStack<QPainterPath> * clipPaths; // needs to be a pointer; the object itself apparently can't live in a struct like this
 */
 };
+
+void resetTransform(draw_surface * s)
+{
+	if (!s || !s->painter)
+		return;
+	s->painter->setTransform(s->globalTransform, false);
+}
+
+void setTransform(draw_surface * s, const QTransform & transform, const bool combine = false)
+{
+	if (!s || !s->painter)
+	if (!combine)
+		s->painter->setTransform(s->globalTransform, false);
+	s->painter->setTransform(transform, true);
+}
 
 /*
 QColor fz_color_to_QColor(fz_colorspace *colorspace, float *color)
@@ -415,7 +431,7 @@ void fz_qt4_draw_fill_path(void *user, fz_path *path, int even_odd, fz_matrix ct
 
 	fz_qt4_draw_device * ddev = (fz_qt4_draw_device*)user;
 	ddev->surface->painter->save();
-	ddev->surface->painter->setTransform(fz_matrix_to_QTransform(ctm));
+	setTransform(ddev->surface, fz_matrix_to_QTransform(ctm));
 	
 	// **TODO:** knockout
 //	if (dev->blendmode & FZ_BLEND_KNOCKOUT)
@@ -512,7 +528,7 @@ void fz_qt4_draw_stroke_path(void *user, fz_path *path, fz_stroke_state *stroke,
 //		fz_knockout_begin(dev);
 
 	ddev->surface->painter->save();
-	ddev->surface->painter->setTransform(fz_matrix_to_QTransform(ctm));
+	setTransform(ddev->surface, fz_matrix_to_QTransform(ctm));
 
 	ddev->surface->painter->setBrush(Qt::NoBrush);
 	ddev->surface->painter->setPen(fz_stroke_state_to_QPen(stroke, colorspace, color, alpha));
@@ -537,7 +553,7 @@ void fz_qt4_draw_fill_shade(void *user, fz_shade *shade, fz_matrix ctm, float al
 	// **TODO:** Implement!
 	qDebug() << "fill_shade [TODO]";
 	fz_qt4_draw_device * ddev = (fz_qt4_draw_device*)user;
-	ddev->surface->painter->setTransform(fz_matrix_to_QTransform(ctm));
+	setTransform(ddev->surface, fz_matrix_to_QTransform(ctm));
 
 	// Get the rectangle to paint in
 	// Note: controlPointRect() is significantly faster than boundingRect(),
@@ -545,6 +561,7 @@ void fz_qt4_draw_fill_shade(void *user, fz_shade *shade, fz_matrix ctm, float al
 	QRectF rect(ddev->surface->painter->clipPath().controlPointRect());
 	if (rect.isEmpty()) {
 		// Without valid clipping path, take the whole page rect
+		// FIXME: Does this work with a globalTransform?
 		QRectF deviceRect(0, 0, ddev->surface->painter->device()->width(), ddev->surface->painter->device()->height());
 		rect = fz_matrix_to_QTransform(ctm).mapRect(ddev->surface->painter->deviceTransform().inverted().mapRect(deviceRect));
 	}
@@ -666,7 +683,7 @@ void fz_qt4_draw_clip_path(void *user, fz_path *path, fz_rect *rect, int even_od
 	fz_qt4_draw_device * ddev = (fz_qt4_draw_device*)user;
 	// Always push & pop paths without transformation or else recursive calls
 	// would mess transformations up real bad
-	ddev->surface->painter->resetTransform();
+	resetTransform(ddev->surface);
 
 	draw_surface * oldSurface = ddev->surface;
 	ddev->surfaceStack->push(oldSurface);
@@ -721,27 +738,79 @@ void fz_qt4_draw_pop_clip(void *user)
 //return;
 	fz_qt4_draw_device * ddev = (fz_qt4_draw_device*)user;
 	QPainterPath clipPath;
+	QImage * img;
 	
 	if (ddev->surfaceStack->isEmpty()) {
 		qDebug() << "[WAR] Clipping stack empty";
 		return;
 	}
-	if (ddev->surface->type != draw_surface::CLIP_PATH) {
-		qDebug() << "[WAR] PopClip without PushClip";
-		return;
+	
+	switch (ddev->surface->type) {
+		case draw_surface::CLIP_PATH:
+		{
+			delete ddev->surface;
+			ddev->surface = ddev->surfaceStack->pop();
+	
+			if (ddev->surface->clipPath.isEmpty())
+				ddev->surface->painter->setClipping(false);
+			else {
+				// Always push & pop paths without transformation or else recursive calls
+				// would mess transformations up real bad
+				resetTransform(ddev->surface);
+				ddev->surface->painter->setClipPath(ddev->surface->clipPath);
+			}
+			break;
+		}
+		case draw_surface::IMAGE_MASK:
+		{
+			draw_surface * oldSurface = ddev->surface;
+
+			oldSurface->painter->end();
+			img = static_cast<QImage*>(oldSurface->painter->device());
+	
+	
+			// **FIXME**: Check that oldSurface->mask is valid and of the correct
+			// size
+			uchar * imgBits, * maskBits;
+			imgBits = img->bits();
+			// TODO: Possibly use oldSurface->mask->constBits iff Qt >= 4.7
+			maskBits = oldSurface->mask->bits();
+			for (int i = 0; i < img->width() * img->height(); ++i) {
+				// Note: Since img has format QImage::Format_ARGB32_Premultiplied,
+				// we need to multiply all channels by the mask's alpha channel
+				imgBits[4 * i + 0] = imgBits[4 * i + 0] * maskBits[4 * i + 3] / 255;
+				imgBits[4 * i + 1] = imgBits[4 * i + 1] * maskBits[4 * i + 3] / 255;
+				imgBits[4 * i + 2] = imgBits[4 * i + 2] * maskBits[4 * i + 3] / 255;
+				imgBits[4 * i + 3] = imgBits[4 * i + 3] * maskBits[4 * i + 3] / 255;
+			}
+	
+			ddev->surface = ddev->surfaceStack->pop();
+	
+			if (ddev->surface->clipPath.isEmpty())
+				ddev->surface->painter->setClipping(false);
+			else {
+				// Always push & pop paths without transformation or else recursive calls
+				// would mess transformations up real bad
+				resetTransform(ddev->surface);
+				ddev->surface->painter->setClipPath(ddev->surface->clipPath);
+			}
+			
+			ddev->surface->painter->drawImage(QPointF(0, 0), *img);
+//			ddev->surface->painter->drawImage(QPointF(0, 0), *(oldSurface->mask));
+			// was save()'d in clip_image_mask
+			ddev->surface->painter->restore();
+
+			delete img;
+			delete oldSurface->mask;
+			delete oldSurface;
+			break;
+		}
+		default:
+			qDebug() << "[WAR] PopClip without PushClip";
+			break;
 	}
 	
-	delete ddev->surface;
-	ddev->surface = ddev->surfaceStack->pop();
-	
-	if (ddev->surface->clipPath.isEmpty())
-		ddev->surface->painter->setClipping(false);
-	else {
-		// Always push & pop paths without transformation or else recursive calls
-		// would mess transformations up real bad
-		ddev->surface->painter->resetTransform();
-		ddev->surface->painter->setClipPath(ddev->surface->clipPath);
-	}
+
 }
 
 void fz_qt4_draw_clip_text(void *user, fz_text *text, fz_matrix ctm, int accumulate)
@@ -751,7 +820,7 @@ void fz_qt4_draw_clip_text(void *user, fz_text *text, fz_matrix ctm, int accumul
 	// Always push & pop paths without transformation or else recursive calls
 	// would mess transformations up real bad
 	draw_surface * oldSurface = ddev->surface;
-	ddev->surface->painter->resetTransform();
+	resetTransform(ddev->surface);
 	ddev->surfaceStack->push(oldSurface);
 	
 	ddev->surface = new draw_surface;
@@ -799,9 +868,58 @@ void fz_qt4_draw_clip_stroke_text(void *user, fz_text *text, fz_stroke_state *st
 
 void fz_qt4_draw_clip_image_mask(void *user, fz_pixmap *image, fz_rect *rect, fz_matrix ctm)
 {
+	uchar * maskData;
 	// **TODO:** Implement!
 	qDebug() << "clip_image_mask [TODO]";
-//	fz_qt4_draw_device * ddev = (fz_qt4_draw_device*)user;
+	fz_qt4_draw_device * ddev = (fz_qt4_draw_device*)user;
+	draw_surface * oldSurface = ddev->surface;
+	ddev->surfaceStack->push(oldSurface);
+	ddev->surface = new draw_surface;
+	ddev->surface->painter = new QPainter();
+	ddev->surface->type = draw_surface::IMAGE_MASK;
+	
+
+	fz_bbox bbox;
+	bbox = fz_round_rect(fz_transform_rect(ctm, fz_unit_rect));
+//	bbox = fz_intersect_bbox(bbox, dev->scissor);
+	if (rect)
+		bbox = fz_intersect_bbox(bbox, fz_round_rect(*rect));
+
+	oldSurface->painter->save();
+	// Ensure we're painting at the right position in pop_clip
+	setTransform(oldSurface, QTransform::fromTranslate(bbox.x0, bbox.y0), true);
+	
+	maskData = new uchar[4 * image->w * image->h];
+	for (int i = 0; i < image->w * image->h; ++i) {
+		maskData[4 * i + 0] = 0;
+		maskData[4 * i + 1] = 0;
+		maskData[4 * i + 2] = 0;
+		maskData[4 * i + 3] = image->samples[i];
+	}
+
+	// Create a QImage that shares data with the fz_pixmap.
+	QImage tmp_image(maskData, image->w, image->h, QImage::Format_ARGB32_Premultiplied);
+	
+	// Transform mask so it can be painted directly in pop_clip
+	ddev->surface->mask = new QImage(tmp_image.mirrored().scaled(QSize(bbox.x1 - bbox.x0, bbox.y1 - bbox.y0), Qt::IgnoreAspectRatio, Qt::SmoothTransformation));
+	
+	delete[] maskData;
+
+	// FIXME: Could bbox be negative (it probably can be translated)?
+	// Yes, it can. Port this solution to tile rendering
+	QImage * img = new QImage(bbox.x1 - bbox.x0, bbox.y1 - bbox.y0, QImage::Format_ARGB32_Premultiplied);
+
+	// Set background to be transparent white (with Format_ARGB32_Premultiplied,
+	// this is actually identical to Qt::transparent)
+	img->fill(QColor(255, 255, 255, 0));
+
+	ddev->surface->painter->begin(img);
+
+	// Shift everything in the new painter so that we only need to store a rect
+	// of size bbox
+	ddev->surface->globalTransform = oldSurface->globalTransform;
+	ddev->surface->globalTransform.translate(-bbox.x0, -bbox.y0);
+	resetTransform(ddev->surface);
 }
 
 void fz_qt4_draw_fill_image(void *user, fz_pixmap *image, fz_matrix ctm, float alpha)
@@ -832,7 +950,7 @@ void fz_qt4_draw_fill_image(void *user, fz_pixmap *image, fz_matrix ctm, float a
 	// is upside-down (as usual with pdf coordinates)
 	
 	ddev->surface->painter->save();
-	ddev->surface->painter->setTransform(fz_matrix_to_QTransform(ctm).scale(1./image->w, -1./image->h).translate(0, -image->h));
+	setTransform(ddev->surface, fz_matrix_to_QTransform(ctm).scale(1./image->w, -1./image->h).translate(0, -image->h));
 	ddev->surface->painter->drawImage(QPointF(0, 0), tmp_image);
 	ddev->surface->painter->restore();
 
@@ -928,7 +1046,7 @@ void fz_qt4_draw_fill_text(void *user, fz_text *text, fz_matrix ctm,
 	fz_qt4_draw_device * ddev = (fz_qt4_draw_device*)user;
 
 	ddev->surface->painter->save();
-	ddev->surface->painter->setTransform(fz_matrix_to_QTransform(ctm));
+	setTransform(ddev->surface, fz_matrix_to_QTransform(ctm));
 
 	// **TODO:** knockout
 //	if (dev->blendmode & FZ_BLEND_KNOCKOUT)
@@ -1095,7 +1213,7 @@ void fz_qt4_draw_stroke_text(void *user, fz_text *text, fz_stroke_state *stroke,
 	fz_qt4_draw_device * ddev = (fz_qt4_draw_device*)user;
 
 	ddev->surface->painter->save();
-	ddev->surface->painter->setTransform(fz_matrix_to_QTransform(ctm));
+	setTransform(ddev->surface, fz_matrix_to_QTransform(ctm));
 
 	// **TODO:** knockout
 //	if (dev->blendmode & FZ_BLEND_KNOCKOUT)
@@ -1145,7 +1263,7 @@ void fz_qt4_draw_fill_image_mask(void *user, fz_pixmap *image, fz_matrix ctm,
 	// Note: the rotation/scale part works on normalized image coordinates and
 	// is upside-down (as usual with pdf coordinates)
 	ddev->surface->painter->save();
-	ddev->surface->painter->setTransform(fz_matrix_to_QTransform(ctm).scale(1./image->w, -1./image->h).translate(0, -image->h));
+	setTransform(ddev->surface, fz_matrix_to_QTransform(ctm).scale(1./image->w, -1./image->h).translate(0, -image->h));
 	ddev->surface->painter->drawImage(QPointF(0, 0), tmp_image);
 	ddev->surface->painter->restore();
 	
@@ -1161,7 +1279,7 @@ void fz_qt4_draw_begin_tile(void *user, fz_rect area, fz_rect view, float xstep,
 	
 
 	ddev->surface->painter->save();
-	ddev->surface->painter->setTransform(fz_matrix_to_QTransform(ctm));
+	setTransform(ddev->surface, fz_matrix_to_QTransform(ctm));
 
 	ddev->surfaceStack->push(ddev->surface);
 	
