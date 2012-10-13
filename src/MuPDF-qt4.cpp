@@ -670,11 +670,13 @@ void fz_qt4_draw_clip_path(void *user, fz_path *path, fz_rect *rect, int even_od
 	fz_qt4_draw_device * ddev = (fz_qt4_draw_device*)user;
 	// Always push & pop paths without transformation or else recursive calls
 	// would mess transformations up real bad
+	QTransform oldT(ddev->surface->painter->transform());
 	resetTransform(ddev->surface);
 
 	draw_surface * oldSurface = ddev->surface;
 	ddev->surfaceStack->push(oldSurface);
 	ddev->surface = new draw_surface;
+	ddev->surface->globalTransform = oldSurface->globalTransform;
 	ddev->surface->painter = oldSurface->painter;
 	ddev->surface->type = draw_surface::CLIP_PATH;
 	QTransform t(fz_matrix_to_QTransform(ctm));
@@ -700,6 +702,8 @@ void fz_qt4_draw_clip_path(void *user, fz_path *path, fz_rect *rect, int even_od
 */
 	ddev->surface->painter->setClipPath(t.map(fz_path_to_QPainterPath(path, even_odd)), Qt::IntersectClip);
 	ddev->surface->clipPath = ddev->surface->painter->clipPath();
+
+	ddev->surface->painter->setTransform(oldT);
 }
 
 // New clip path from path outline (?)
@@ -743,8 +747,10 @@ void fz_qt4_draw_pop_clip(void *user)
 			else {
 				// Always push & pop paths without transformation or else recursive calls
 				// would mess transformations up real bad
+				QTransform oldT(ddev->surface->painter->transform());
 				resetTransform(ddev->surface);
 				ddev->surface->painter->setClipPath(ddev->surface->clipPath);
+				ddev->surface->painter->setTransform(oldT);
 			}
 			break;
 		}
@@ -780,8 +786,10 @@ void fz_qt4_draw_pop_clip(void *user)
 			else {
 				// Always push & pop paths without transformation or else recursive calls
 				// would mess transformations up real bad
+				QTransform oldT(ddev->surface->painter->transform());
 				resetTransform(ddev->surface);
 				ddev->surface->painter->setClipPath(ddev->surface->clipPath);
+				ddev->surface->painter->setTransform(oldT);
 			}
 
 			ddev->surface->painter->drawImage(QPointF(0, 0), *img);
@@ -808,6 +816,7 @@ void fz_qt4_draw_clip_text(void *user, fz_text *text, fz_matrix ctm, int accumul
 	fz_qt4_draw_device * ddev = (fz_qt4_draw_device*)user;
 	// Always push & pop paths without transformation or else recursive calls
 	// would mess transformations up real bad
+	QTransform oldT(ddev->surface->painter->transform());
 	draw_surface * oldSurface = ddev->surface;
 	resetTransform(ddev->surface);
 	ddev->surfaceStack->push(oldSurface);
@@ -815,6 +824,7 @@ void fz_qt4_draw_clip_text(void *user, fz_text *text, fz_matrix ctm, int accumul
 	ddev->surface = new draw_surface;
 	ddev->surface->painter = oldSurface->painter;
 	ddev->surface->type = draw_surface::CLIP_PATH;
+	ddev->surface->globalTransform = oldSurface->globalTransform;
 	QTransform t(fz_matrix_to_QTransform(ctm));
 	
 	// **TODO:** accumulate
@@ -844,6 +854,8 @@ void fz_qt4_draw_clip_text(void *user, fz_text *text, fz_matrix ctm, int accumul
 
 	ddev->surface->painter->setClipPath(t.map(clipPath), Qt::IntersectClip);
 	ddev->surface->clipPath = ddev->surface->painter->clipPath();
+
+	ddev->surface->painter->setTransform(oldT);
 }
 
 void fz_qt4_draw_clip_stroke_text(void *user, fz_text *text, fz_stroke_state *stroke, fz_matrix ctm)
@@ -1262,13 +1274,13 @@ void fz_qt4_draw_begin_tile(void *user, fz_rect area, fz_rect view, float xstep,
 	qDebug() << "draw_begin_tile [TODO]";
 	
 	fz_qt4_draw_device * ddev = (fz_qt4_draw_device*)user;
+	draw_surface * oldSurface = ddev->surface;
 	fz_bbox bbox;
 	
+	oldSurface->painter->save();
+	setTransform(oldSurface, fz_matrix_to_QTransform(ctm));
 
-	ddev->surface->painter->save();
-	setTransform(ddev->surface, fz_matrix_to_QTransform(ctm));
-
-	ddev->surfaceStack->push(ddev->surface);
+	ddev->surfaceStack->push(oldSurface);
 	
 	ddev->surface = new draw_surface;
 	ddev->surface->painter = new QPainter();
@@ -1279,15 +1291,20 @@ void fz_qt4_draw_begin_tile(void *user, fz_rect area, fz_rect view, float xstep,
 
 	bbox = fz_round_rect(fz_transform_rect(ctm, view));
 	
-	// FIXME: Could bbox be negative (it probably can be translated)?
-	QImage * img = new QImage(bbox.x1, bbox.y1, QImage::Format_ARGB32_Premultiplied);
+	QImage * img = new QImage(bbox.x1 - bbox.x0, bbox.y1 - bbox.y0, QImage::Format_ARGB32_Premultiplied);
 
 	// Set background to be transparent white (with Format_ARGB32_Premultiplied,
 	// this is actually identical to Qt::transparent)
 	img->fill(QColor(255, 255, 255, 0));
-	
+
 	ddev->surface->painter->begin(img);
-	// FIXME: There is a bug in mupdf when rendering tiles to fill text outlines
+
+	// Shift everything in the new painter so that we only need to store a rect
+	// of size bbox
+	ddev->surface->globalTransform = oldSurface->globalTransform;
+	ddev->surface->globalTransform.translate(-bbox.x0, -bbox.y0);
+	resetTransform(ddev->surface);
+
 }
 
 void fz_qt4_draw_end_tile(void *user)
