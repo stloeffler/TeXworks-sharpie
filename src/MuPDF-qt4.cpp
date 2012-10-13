@@ -55,6 +55,7 @@ void resetTransform(draw_surface * s)
 void setTransform(draw_surface * s, const QTransform & transform, const bool combine = false)
 {
 	if (!s || !s->painter)
+		return;
 	if (!combine)
 		s->painter->setTransform(s->globalTransform, false);
 	s->painter->setTransform(transform, true);
