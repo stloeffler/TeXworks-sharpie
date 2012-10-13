@@ -31,18 +31,6 @@ struct fz_qt4_draw_device_s
 
 	draw_surface * surface;
 	QStack<draw_surface *> * surfaceStack;
-
-/*
-	QPainter * painter;
-
-	// FIXME: should be nest-able in case we have tiles within tiles?
-	float xStep, yStep;
-	QRectF area;
-	
-	
-	QStack<QPainter*> * painterStack;
-	QStack<QPainterPath> * clipPaths; // needs to be a pointer; the object itself apparently can't live in a struct like this
-*/
 };
 
 void resetTransform(draw_surface * s)
@@ -550,7 +538,6 @@ void fz_qt4_draw_fill_shade(void *user, fz_shade *shade, fz_matrix ctm, float al
 //	if (++round > 0)
 //		return;
 
-
 	// **TODO:** Implement!
 	qDebug() << "fill_shade [TODO]";
 	fz_qt4_draw_device * ddev = (fz_qt4_draw_device*)user;
@@ -580,8 +567,6 @@ void fz_qt4_draw_fill_shade(void *user, fz_shade *shade, fz_matrix ctm, float al
 	if (!shade->use_function)
 		return;
 
-//return;
-
 	QTransform t(fz_matrix_to_QTransform(shade->matrix));
 	switch (shade->type) {
 		case FZ_LINEAR:
@@ -602,7 +587,7 @@ void fz_qt4_draw_fill_shade(void *user, fz_shade *shade, fz_matrix ctm, float al
 				if (shade->extend[1] == 0)
 					stop.setAlphaF(0);
 				gradient.setColorAt(1, stop);
-					
+
 				gradient.setStart(t.map(QPointF(shade->mesh[0], shade->mesh[1])));
 				gradient.setFinalStop(t.map(QPointF(shade->mesh[3], shade->mesh[4])));
 				ddev->surface->painter->fillRect(rect, gradient);
@@ -639,6 +624,7 @@ void fz_qt4_draw_fill_shade(void *user, fz_shade *shade, fz_matrix ctm, float al
 			}
 			break;
 		case FZ_MESH:
+			qDebug() << "[TODO] Mesh shading";
 			// **TODO:** Mesh shading
 			break;
 	}
@@ -699,16 +685,16 @@ void fz_qt4_draw_clip_path(void *user, fz_path *path, fz_rect *rect, int even_od
 #ifdef MU_DEBUG
 	// Draw the clip path (disable clipping before and reenable it afterwards if
 	// necessary)
-	if (ddev->painter->hasClipping()) {
-		QPainterPath oldClipPath = ddev->painter->clipPath();
-		ddev->painter->setClipping(false);
-		ddev->painter->setPen(QPen(2));
-		ddev->painter->setBrush(Qt::NoBrush);
-		ddev->painter->drawPath(oldClipPath.intersected(t.map(fz_path_to_QPainterPath(path, even_odd))));
-		ddev->painter->setClipPath(oldClipPath);
+	if (ddev->surface->painter->hasClipping()) {
+		QPainterPath oldClipPath = ddev->surface->painter->clipPath();
+		ddev->surface->painter->setClipping(false);
+		ddev->surface->painter->setPen(QPen(2));
+		ddev->surface->painter->setBrush(Qt::NoBrush);
+		ddev->surface->painter->drawPath(oldClipPath.intersected(t.map(fz_path_to_QPainterPath(path, even_odd))));
+		ddev->surface->painter->setClipPath(oldClipPath);
 	}
 	else {
-		ddev->painter->drawPath(t.map(fz_path_to_QPainterPath(path, even_odd)));
+		ddev->surface->painter->drawPath(t.map(fz_path_to_QPainterPath(path, even_odd)));
 	}
 #endif
 */
@@ -769,24 +755,26 @@ void fz_qt4_draw_pop_clip(void *user)
 			oldSurface->painter->end();
 			img = static_cast<QImage*>(oldSurface->painter->device());
 	
-	
-			// **FIXME**: Check that oldSurface->mask is valid and of the correct
-			// size
-			uchar * imgBits, * maskBits;
-			imgBits = img->bits();
-			// TODO: Possibly use oldSurface->mask->constBits iff Qt >= 4.7
-			maskBits = oldSurface->mask->bits();
-			for (int i = 0; i < img->width() * img->height(); ++i) {
-				// Note: Since img has format QImage::Format_ARGB32_Premultiplied,
-				// we need to multiply all channels by the mask's alpha channel
-				imgBits[4 * i + 0] = imgBits[4 * i + 0] * maskBits[4 * i + 3] / 255;
-				imgBits[4 * i + 1] = imgBits[4 * i + 1] * maskBits[4 * i + 3] / 255;
-				imgBits[4 * i + 2] = imgBits[4 * i + 2] * maskBits[4 * i + 3] / 255;
-				imgBits[4 * i + 3] = imgBits[4 * i + 3] * maskBits[4 * i + 3] / 255;
+			// If oldSurface->mask is valid and of the correct size, apply it
+			// to the image
+			if (oldSurface->mask && img->width() == oldSurface->mask->width() && img->height() == oldSurface->mask->height()) {
+				uchar * imgBits, * maskBits;
+				imgBits = img->bits();
+				// TODO: Possibly use oldSurface->mask->constBits iff Qt >= 4.7
+				maskBits = oldSurface->mask->bits();
+
+				for (int i = 0; i < img->width() * img->height(); ++i) {
+					// Note: Since img has format QImage::Format_ARGB32_Premultiplied,
+					// we need to multiply all channels by the mask's alpha channel
+					imgBits[4 * i + 0] = imgBits[4 * i + 0] * maskBits[4 * i + 3] / 255;
+					imgBits[4 * i + 1] = imgBits[4 * i + 1] * maskBits[4 * i + 3] / 255;
+					imgBits[4 * i + 2] = imgBits[4 * i + 2] * maskBits[4 * i + 3] / 255;
+					imgBits[4 * i + 3] = imgBits[4 * i + 3] * maskBits[4 * i + 3] / 255;
+				}
 			}
-	
+
 			ddev->surface = ddev->surfaceStack->pop();
-	
+
 			if (ddev->surface->clipPath.isEmpty())
 				ddev->surface->painter->setClipping(false);
 			else {
@@ -795,9 +783,9 @@ void fz_qt4_draw_pop_clip(void *user)
 				resetTransform(ddev->surface);
 				ddev->surface->painter->setClipPath(ddev->surface->clipPath);
 			}
-			
+
 			ddev->surface->painter->drawImage(QPointF(0, 0), *img);
-//			ddev->surface->painter->drawImage(QPointF(0, 0), *(oldSurface->mask));
+
 			// was save()'d in clip_image_mask
 			ddev->surface->painter->restore();
 
@@ -870,19 +858,18 @@ void fz_qt4_draw_clip_stroke_text(void *user, fz_text *text, fz_stroke_state *st
 void fz_qt4_draw_clip_image_mask(void *user, fz_pixmap *image, fz_rect *rect, fz_matrix ctm)
 {
 	uchar * maskData;
-	// **TODO:** Implement!
-	qDebug() << "clip_image_mask [TODO]";
+#ifdef MU_DEBUG
+	qDebug() << "clip_image_mask";
+#endif
 	fz_qt4_draw_device * ddev = (fz_qt4_draw_device*)user;
 	draw_surface * oldSurface = ddev->surface;
 	ddev->surfaceStack->push(oldSurface);
 	ddev->surface = new draw_surface;
 	ddev->surface->painter = new QPainter();
 	ddev->surface->type = draw_surface::IMAGE_MASK;
-	
 
 	fz_bbox bbox;
 	bbox = fz_round_rect(fz_transform_rect(ctm, fz_unit_rect));
-//	bbox = fz_intersect_bbox(bbox, dev->scissor);
 	if (rect)
 		bbox = fz_intersect_bbox(bbox, fz_round_rect(*rect));
 
@@ -906,8 +893,6 @@ void fz_qt4_draw_clip_image_mask(void *user, fz_pixmap *image, fz_rect *rect, fz
 	
 	delete[] maskData;
 
-	// FIXME: Could bbox be negative (it probably can be translated)?
-	// Yes, it can. Port this solution to tile rendering
 	QImage * img = new QImage(bbox.x1 - bbox.x0, bbox.y1 - bbox.y0, QImage::Format_ARGB32_Premultiplied);
 
 	// Set background to be transparent white (with Format_ARGB32_Premultiplied,
@@ -996,11 +981,12 @@ void fz_qt4_draw_end_group(void *user)
 // Text
 ////////////////////////////////////////////////////////////////////////////////
 
+/*
 // From <mupdf>/fitz/res_font.c
 static fz_matrix
 fz_adjust_ft_glyph_width(fz_font *font, int gid, fz_matrix trm)
 {
-	/* Fudge the font matrix to stretch the glyph if we've substituted the font. */
+	/ * Fudge the font matrix to stretch the glyph if we've substituted the font. * /
 	if (font->ft_substitute && gid < font->width_count)
 	{
 		FT_Error fterr;
@@ -1008,7 +994,7 @@ fz_adjust_ft_glyph_width(fz_font *font, int gid, fz_matrix trm)
 		int realw;
 		float scale;
 
-		/* TODO: use FT_Get_Advance */
+		/ * TODO: use FT_Get_Advance * /
 		fterr = FT_Set_Char_Size((FT_Face)(font->ft_face), 1000, 1000, 72, 72);
 		if (fterr)
 //			fz_warn("freetype setting character size: %s", ft_error_string(fterr));
@@ -1033,7 +1019,7 @@ fz_adjust_ft_glyph_width(fz_font *font, int gid, fz_matrix trm)
 	return trm;
 }
 // End snippet
-
+*/
 
 
 
