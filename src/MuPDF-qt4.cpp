@@ -10,7 +10,7 @@ typedef struct draw_surface_s draw_surface;
 
 struct draw_surface_s
 {
-	enum Type { BASE, CLIP_PATH, IMAGE_MASK, TILING } type;
+	enum Type { BASE, CLIP_PATH, IMAGE_MASK, TILING, MASK } type;
 	QPainter * painter;
 	QTransform globalTransform;
 
@@ -85,6 +85,16 @@ QRectF toRectF(const fz_rect r)
 QRectF toRectF(const fz_bbox r)
 {
   return QRectF(QPointF(r.x0, r.y0), QPointF(r.x1, r.y1));
+}
+
+fz_rect toFzRect(const QRectF r)
+{
+	fz_rect retVal;
+	retVal.x0 = r.left();
+	retVal.y0 = r.top();
+	retVal.x1 = r.right();
+	retVal.y1 = r.bottom();
+	return retVal;
 }
 
 
@@ -959,18 +969,126 @@ void fz_qt4_draw_fill_image(void *user, fz_pixmap *image, fz_matrix ctm, float a
 		fz_drop_pixmap(converted);
 }
 
-void fz_qt4_draw_begin_mask(void *user, fz_rect area, int luminosity, fz_colorspace *colorspace, float *bc)
+void fz_qt4_draw_begin_mask(void *user, fz_rect area, int luminosity, fz_colorspace *colorspace, float *colorfv)
 {
-	// **TODO:** Implement!
-	qDebug() << "begin_mask [TODO]";
-//	fz_qt4_draw_device * ddev = (fz_qt4_draw_device*)user;
+#ifdef MU_DEBUG
+	qDebug() << "begin_mask";
+#endif
+	fz_qt4_draw_device * ddev = (fz_qt4_draw_device*)user;
+	draw_surface * oldSurface = ddev->surface;
+	fz_bbox bbox;
+
+	// For whatever reason, MuPDF seems to assume an identity CTM in begin_mask
+	resetTransform(oldSurface);
+
+	ddev->surfaceStack->push(oldSurface);
+
+	// Create a new surface on which the mask can be painted
+	ddev->surface = new draw_surface;
+	ddev->surface->painter = new QPainter();
+	ddev->surface->type = draw_surface::MASK;
+	ddev->surface->area = toRectF(area);
+
+	bbox = fz_round_rect(area);
+
+	// We don't support an alpha channel for the mask for now (if it is actually
+	// necessary, it should be fairly easy to add)
+	QImage * img = new QImage(bbox.x1 - bbox.x0, bbox.y1 - bbox.y0, QImage::Format_RGB32);
+//	QImage * img = new QImage(oldSurface->painter->device()->width(), oldSurface->painter->device()->height(), QImage::Format_RGB32);
+
+	if (luminosity) {
+		float bc;
+		if (!colorspace)
+			colorspace = fz_device_gray;
+		fz_convert_color(colorspace, colorfv, fz_device_gray, &bc);
+		unsigned char bcByte = (unsigned char)(bc * 255);
+		img->fill(bcByte << 16 | bcByte << 8 | bcByte);
+	}
+	else {
+		// Set background to be transparent black
+		img->fill(Qt::transparent);
+	}
+
+	ddev->surface->painter->begin(img);
+
+	// Shift (and scale) everything in the new painter so that we only need to
+	// store a rect of size bbox and can paint to it with the normal functions
+	// (i.e., it does not come out upside down)
+	ddev->surface->globalTransform = oldSurface->globalTransform;
+	ddev->surface->globalTransform.translate(0, bbox.y1 - bbox.y0);
+	ddev->surface->globalTransform.scale(1, -1);
+	ddev->surface->globalTransform.translate(-bbox.x0, -bbox.y0);
+
+	resetTransform(ddev->surface);
 }
 
 void fz_qt4_draw_end_mask(void *user)
 {
-	// **TODO:** Implement!
-	qDebug() << "end_mask [TODO]";
-//	fz_qt4_draw_device * ddev = (fz_qt4_draw_device*)user;
+	// We'll pop the mask from the surface stack, convert it to MuPDF's internal
+	// data structures, and then use fz_qt4_draw_clip_image_mask() to actually
+	// use it for masking future drawing operations.
+#ifdef MU_DEBUG
+	qDebug() << "end_mask";
+#endif
+	fz_qt4_draw_device * ddev = (fz_qt4_draw_device*)user;
+	if (ddev->surface->type != draw_surface::MASK || ddev->surfaceStack->isEmpty()) {
+		qDebug() << "end_mask without begin_mask()!";
+		return;
+	}
+
+	// Get the mask image
+	QImage * img = static_cast<QImage*>(ddev->surface->painter->device());
+
+	// Convert the mask rect to an fz_rect
+	fz_rect rect = toFzRect(ddev->surface->area);
+	// Construct a CTM matrix that transforms a unit rectangle to the mask rect
+	fz_matrix ctm;
+	ctm.a = ddev->surface->area.width();
+	ctm.b = 0;
+	ctm.c = 0;
+	ctm.d = ddev->surface->area.height();
+	ctm.e = ddev->surface->area.left();
+	ctm.f = ddev->surface->area.top();
+
+	ddev->surface->painter->end();
+
+	// Convert painted mask to a grayscale fz_pixmap
+	// TODO: Use constBits() iff Qt >= 4.7
+	unsigned char * imgData = img->bits();
+	unsigned char * samples = new unsigned char[img->width() * img->height()];
+	float colorfv[4];
+	for (int i = 0; i < img->width() * img->height(); ++i) {
+		float bc;
+		colorfv[0] = imgData[4 * i + 0] / 255.;
+		colorfv[1] = imgData[4 * i + 1] / 255.;
+		colorfv[2] = imgData[4 * i + 2] / 255.;
+		colorfv[3] = imgData[4 * i + 3] / 255.;
+		fz_convert_color(fz_device_bgr, colorfv, fz_device_gray, &bc);
+		samples[i] = (unsigned char)(255 * bc);
+	}
+	fz_pixmap * mask = fz_new_pixmap_with_data(fz_device_gray, img->width(), img->height(), samples);
+
+	// Remove mask surface from stack
+	delete img;
+	delete ddev->surface;
+	ddev->surface = ddev->surfaceStack->pop();
+
+	if (ddev->surface->clipPath.isEmpty())
+		ddev->surface->painter->setClipping(false);
+	else {
+		// Always push & pop paths without transformation or else recursive calls
+		// would mess transformations up real bad
+		QTransform oldT(ddev->surface->painter->transform());
+		resetTransform(ddev->surface);
+		ddev->surface->painter->setClipPath(ddev->surface->clipPath);
+		ddev->surface->painter->setTransform(oldT);
+	}
+
+	fz_qt4_draw_clip_image_mask(user, mask, &rect, ctm);
+
+	// Clean up
+	fz_drop_pixmap(mask);
+	delete[] samples;
 }
 
 void fz_qt4_draw_begin_group(void *user, fz_rect area, int isolated, int knockout, int blendmode, float alpha)
