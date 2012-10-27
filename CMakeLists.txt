@@ -42,7 +42,7 @@ IF ( NOT DEFINED WITH_MUPDF )
   SET(WITH_MUPDF OFF)
 ENDIF ()
 
-OPTION(WITH_POPPLER "Build Poppler Qt4 backend" ${WITH_POPPLERQT4})
+OPTION(WITH_POPPLERQT4 "Build Poppler Qt4 backend" ${WITH_POPPLERQT4})
 # MuPDF backend is a bit immature, so we don't bother with it by default right
 # now.
 OPTION(WITH_MUPDF "Build MuPDF backend" ${WITH_MUPDF})
