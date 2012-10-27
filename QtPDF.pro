@@ -11,6 +11,7 @@ SOURCES = \
 "src/PDFActions.cpp" \
 "src/PDFAnnotations.cpp" \
 "src/backends/PopplerQt4Backend.cpp" \
+"src/backends/MuPDF-qt4.cpp" \
 "src/backends/MuPDFBackend.cpp" \
 "src/PDFDocumentView.h" \
 "src/PDFDocumentWidget.h" \
@@ -20,7 +21,8 @@ SOURCES = \
 "src/PDFActions.h" \
 "src/PDFAnnotations.h" \
 "src/backends/PopplerQt4Backend.h" \
-"src/backends/MuPDFBackend.h"
+"src/backends/MuPDFBackend.h" \
+"src/backends/MuPDF-qt4.h"
 
 TRANSLATIONS = \
 "trans/QtPDF_de.ts"
