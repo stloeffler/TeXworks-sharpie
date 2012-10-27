@@ -35,6 +35,7 @@ namespace Backend {
 
 namespace MuPDF {
 
+
 class Document;
 class Page;
 
@@ -75,6 +76,8 @@ public:
   PDFToC toc() const;
   QList<PDFFontInfo> fonts() const;
 
+  void print(QPrinter *printer, const int currentPage) const;
+
 private:
   enum PermissionLevel { PermissionLevel_Locked, PermissionLevel_User, PermissionLevel_Owner };
   QString _password;
@@ -103,7 +106,7 @@ class Page: public Backend::Page
   QList< QSharedPointer<Annotation::Link> > _links;
   bool _annotationsLoaded;
   bool _linksLoaded;
-  
+
   // requires a doc-lock and a page-write-lock
   void loadTransitionData();
 
@@ -116,6 +119,7 @@ public:
   QSizeF pageSizeF() const;
 
   QImage renderToImage(double xres, double yres, QRect render_box = QRect(), bool cache = false);
+  void renderToQPainter(QPainter * painter, const qreal leftMargin = 0, const qreal topMargin = 0, const qreal rightMargin = 0, const qreal bottomMargin = 0) const;
 
   QList< QSharedPointer<Annotation::Link> > loadLinks();
   QList< QSharedPointer<Annotation::AbstractAnnotation> > loadAnnotations();

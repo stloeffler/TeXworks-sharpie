@@ -2,6 +2,7 @@
 <RCC version="1.0">
   <qresource>
     <file>icons/document-open.png</file>
+    <file>icons/document-print.png</file>
     <file>icons/fitwidth.png</file>
     <file>icons/fitwindow.png</file>
     <file>icons/hand.png</file>

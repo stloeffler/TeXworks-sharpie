@@ -14,6 +14,8 @@
 
 // NOTE: `MuPDFBackend.h` is included via `PDFBackend.h`
 #include <PDFBackend.h>
+#include <QPainter>
+#include "MuPDF-qt4.h"
 
 #ifdef HAVE_LOCALE_H
 #include <locale.h>
@@ -25,6 +27,7 @@ namespace Backend {
 
 namespace MuPDF {
 
+/*
 QRectF toRectF(const fz_rect r)
 {
   return QRectF(QPointF(r.x0, r.y0), QPointF(r.x1, r.y1));
@@ -34,12 +37,12 @@ QRectF toRectF(const fz_bbox r)
 {
   return QRectF(QPointF(r.x0, r.y0), QPointF(r.x1, r.y1));
 }
-
+*/
 QRectF toRectF(fz_obj * o)
 {
   if (!fz_is_array(o) || fz_array_len(o) != 4)
     return QRectF();
-  
+
   return QRectF(QPointF(fz_to_real(fz_array_get(o, 0)), fz_to_real(fz_array_get(o, 1))), \
                 QPointF(fz_to_real(fz_array_get(o, 2)), fz_to_real(fz_array_get(o, 3))));
 }
@@ -108,7 +111,7 @@ PDFDestination toPDFDestination(pdf_xref * xref, fz_obj * dest)
     QString type = QString::fromAscii(fz_to_name(fz_array_get(dest, 1)));
     float left, top, bottom, right, zoom;
 
-    // /XYZ left top zoom 
+    // /XYZ left top zoom
     if (type == QString::fromUtf8("XYZ")) {
       if (fz_array_len(dest) != 5)
         return PDFDestination();
@@ -292,7 +295,7 @@ void initPDFAnnotation(Annotation::AbstractAnnotation * annot, QWeakPointer<Back
 
   if (!fz_is_dict(src))
     return;
-  
+
   annot->setRect(toRectF(fz_dict_gets(src, keyRect)));
   annot->setContents(QString::fromUtf8(fz_to_str_buf(fz_dict_gets(src, keyContents))));
   annot->setName(QString::fromUtf8(fz_to_str_buf(fz_dict_gets(src, keyNM))));
@@ -598,7 +601,7 @@ PDFDestination Document::resolveDestination(const PDFDestination & namedDestinat
   MuPDFLocaleResetter lr;
 
   Q_ASSERT(_mupdf_data != NULL);
-  
+
   // TODO: Test this method
 
   // If namedDestination is not a named destination at all, simply return a copy
@@ -659,7 +662,7 @@ QList<PDFFontInfo> Document::fonts() const
 
         PDFFontDescriptor descriptor;
         PDFFontInfo fi;
-        
+
         // Parse the /FontDescriptor dictionary (if it exists)
         // If not, try to derive the font name from /BaseFont (if it exists) or
         // /Name
@@ -820,6 +823,101 @@ bool Document::unlock(const QString password)
   return success;
 }
 
+void Document::print(QPrinter *printer, const int currentPage) const
+{
+  if (!printer || !permissions().testFlag(Permission_Print))
+    return;
+
+  QReadLocker docLocker(_docLock.data());
+  qreal leftMargin, topMargin, rightMargin, bottomMargin;
+  int fromPage = 0, toPage = _numPages - 1;
+  int numCopies = 1;
+  QVector<int> pages2Print;
+
+  // Get the margins (i.e., the difference between the pageRect that the
+  // QPainter is set up to paint to by default and the paperRect which
+  // represents the whole page; usually, PDFs are set up to represent the whole
+  // page, not just the part inside the printer margins)
+  leftMargin = printer->pageRect().left() - printer->paperRect().left();
+  rightMargin = printer->paperRect().right() - printer->pageRect().right();
+  topMargin = printer->pageRect().top() - printer->paperRect().top();
+  bottomMargin = printer->paperRect().bottom() - printer->pageRect().bottom();
+
+#if QT_VERSION >= 0x040700
+  numCopies = (printer->supportsMultipleCopies() ? 1 : printer->copyCount());
+#else
+  numCopies = printer->numCopies();
+#endif
+
+  // Compute pages to print
+  {
+    switch (printer->printRange()) {
+    case QPrinter::CurrentPage:
+      fromPage = toPage = currentPage;
+      break;
+    case QPrinter::PageRange:
+      fromPage = printer->fromPage() - 1;
+      toPage = printer->toPage() - 1;
+      break;
+    case QPrinter::AllPages:
+      default:
+        break;
+    }
+
+    // Make sure fromPage <= toPage
+    if (fromPage > toPage) {
+      int dummy = fromPage;
+      fromPage = toPage;
+      toPage = dummy;
+    }
+
+    // Clamp pages
+    if (fromPage < 0)
+      fromPage = 0;
+    if (toPage >= _numPages)
+      toPage = _numPages - 1;
+
+    QVector<int> pages;
+    // Loop over copies of the same page if collating
+    for (int k = 0; k == 0 || (k < numCopies && printer->collateCopies()); ++k) {
+      // Loop over pages to print
+      for (int i = fromPage; i <= toPage; ++i) {
+        // Loop over copies of the same page if not collating
+        for (int j = 0; j == 0 || (j < numCopies && !printer->collateCopies()); ++j)
+          pages << i;
+      }
+    }
+
+    pages2Print.clear();
+    pages2Print.resize(pages.size());
+
+    switch (printer->pageOrder()) {
+    case QPrinter::FirstPageFirst:
+      qCopy(pages.begin(), pages.end(), pages2Print.begin());
+      break;
+    case QPrinter::LastPageFirst:
+      qCopyBackward(pages.begin(), pages.end(), pages2Print.end());
+    }
+  } // compute pages to print
+
+  QPainter p;
+  p.begin(printer);
+
+  for (int i = 0; i < pages2Print.size(); ++i) {
+    // if this is not the first page, start a new page (the first page is
+    // created implicitly by QPainter::begin())
+    if (i != 0)
+      printer->newPage();
+
+    // Print the page
+    QSharedPointer<Page> page2Print = page(pages2Print[i]).toStrongRef().staticCast<Page>();
+    if (page2Print)
+      page2Print->renderToQPainter(&p, leftMargin, topMargin, rightMargin, bottomMargin);
+  }
+
+  p.end();
+}
+
 
 // Page Class
 // ==========
@@ -859,7 +957,7 @@ Page::Page(Document *parent, int at, QSharedPointer<QReadWriteLock> docLock):
 
   fz_free_device(dev);
   pdf_free_page(page_data);
-  
+
   loadTransitionData();
 }
 
@@ -932,6 +1030,48 @@ QImage Page::renderToImage(double xres, double yres, QRect render_box, bool cach
   }
 
   return renderedPage;
+}
+
+void Page::renderToQPainter(QPainter * painter, const qreal leftMargin /* = 0 */, const qreal topMargin /* = 0 */, const qreal rightMargin /* = 0 */, const qreal bottomMargin /* = 0 */) const
+{
+  QReadLocker docLocker(_docLock.data());
+  QReadLocker pageLocker(_pageLock);
+  if (!_parent || !painter)
+    return;
+
+  QPaintDevice * paintDev(painter->device());
+  Q_ASSERT(paintDev != NULL);
+
+  QRectF paperRect = QRectF(-leftMargin, -topMargin, paintDev->width() + leftMargin + rightMargin, paintDev->height() + topMargin + bottomMargin);
+  QRectF pageRect = toRectF(_bbox);
+
+  bool shrink = (pageRect.width() > paperRect.width() || pageRect.height() > paperRect.height());
+  bool expand = (pageRect.width() < paperRect.width() || pageRect.height() < paperRect.height());
+  bool center = true;
+
+  // Calculate the transformation from the page to the paper.
+  // TODO: Currently, the page is always resized (preserving the aspect ratio)
+  //       that it fits tightly onto the page and is centered. This behavior
+  //       should be configurable.
+  // FIXME: Implement support for _rotate
+  QTransform t = QTransform::fromScale(1, -1);
+  if (shrink || expand) {
+    if (pageRect.width() / pageRect.height() > paperRect.width() / paperRect.height())
+      t.scale(paperRect.width() / pageRect.width(), paperRect.width() / pageRect.width());
+    else
+      t.scale(paperRect.height() / pageRect.height(), paperRect.height() / pageRect.height());
+  }
+  if (center) {
+    QPointF offset(paperRect.center() - t.mapRect(pageRect).center());
+    t = t * QTransform::fromTranslate(offset.x(), offset.y());
+  }
+
+  fz_matrix render_trans = QTransform_to_fz_matrix(t);
+  fz_bbox render_bbox = fz_round_rect(fz_transform_rect(render_trans, _bbox));
+  fz_device *renderer = fz_new_qt4_draw_device(static_cast<Document *>(_parent)->_glyph_cache, painter);
+
+  // Actually render the page.
+  fz_execute_display_list(_mupdf_page, renderer, render_trans, render_bbox);
 }
 
 QList< QSharedPointer<Annotation::Link> > Page::loadLinks()
@@ -1036,7 +1176,7 @@ QList< QSharedPointer<Annotation::AbstractAnnotation> > Page::loadAnnotations()
   if (!page)
     return _annotations;
   pdf_annot * mupdfAnnot = page->annots;
-  
+
   while (mupdfAnnot) {
     if (!fz_is_dict(mupdfAnnot->obj) || QString::fromAscii(fz_to_name(fz_dict_gets(mupdfAnnot->obj, keyType))) != QString::fromAscii("Annot")) {
       mupdfAnnot = mupdfAnnot->next;
@@ -1152,7 +1292,7 @@ QList<SearchResult> Page::search(QString searchText)
     }
     results << result;
 
-    // Offset `i` so we don't find the same match over and over again    
+    // Offset `i` so we don't find the same match over and over again
     i += searchText.length();
   }
 
@@ -1179,15 +1319,15 @@ void Page::loadTransitionData()
   pdf_xref * xref = static_cast<Document*>(_parent)->_mupdf_data;
   Q_ASSERT(xref != NULL);
   Q_ASSERT(xref->page_len >= _n);
-  
+
   fz_obj * page = xref->page_objs[_n];
   Q_ASSERT(page != NULL);
-  
+
   if (_transition) {
     delete _transition;
     _transition = NULL;
   }
-  
+
   trans = fz_dict_gets(page, keyTrans);
   if (!trans)
     return;
@@ -1221,7 +1361,7 @@ void Page::loadTransitionData()
     _transition = new Transition::Fade();
   if (!_transition)
     return;
-  
+
   tmp = fz_dict_gets(trans, keyD);
   if (tmp)
     _transition->setDuration(fz_to_real(tmp));
@@ -1240,8 +1380,8 @@ void Page::loadTransitionData()
       _transition->setMotion(Transition::AbstractTransition::Motion_Inward);
   }
   tmp = fz_dict_gets(trans, keyDi);
-  if (tmp && (style == QString::fromAscii("Wipe") || style == QString::fromAscii("Glitter") || 
-              style == QString::fromAscii("Fly") || style == QString::fromAscii("Cover") || 
+  if (tmp && (style == QString::fromAscii("Wipe") || style == QString::fromAscii("Glitter") ||
+              style == QString::fromAscii("Fly") || style == QString::fromAscii("Cover") ||
               style == QString::fromAscii("Uncover") || style == QString::fromAscii("Push"))) {
     if (fz_is_name(tmp)) {
       // TODO: Di == /None
@@ -1258,11 +1398,11 @@ QList<Backend::Page::Box> Page::boxes()
   QList<Backend::Page::Box> retVal;
   if (!_mupdf_page)
     return retVal;
-  
+
   fz_text_span * textSpan = fz_new_text_span();
   if (!textSpan)
     return retVal;
-  
+
   // Use MuPDF transformations to get the text box coordinates right already
   // during fz_execute_display_list().
   fz_matrix render_trans = fz_identity;
@@ -1297,14 +1437,14 @@ QList<Backend::Page::Box> Page::boxes()
   }
 
   fz_free_text_span(textSpan);
-  
+
   return retVal;
 }
 
 inline bool polygonContains(const QPolygonF & poly, const QRectF & rect)
 {
   QRectF r = poly.intersected(rect).boundingRect();
-  
+
   return (qAbs(r.width() * r.height() - rect.width() * rect.height()) < 1e-6);
 }
 
@@ -1315,11 +1455,11 @@ QString Page::selectedText(const QList<QPolygonF> & selection)
   QString retVal;
   if (!_mupdf_page)
     return retVal;
-  
+
   fz_text_span * textSpan = fz_new_text_span();
   if (!textSpan)
     return retVal;
-  
+
   fz_device * textDevice = fz_new_text_device(textSpan);
   if (!textDevice) {
     fz_free_text_span(textSpan);
@@ -1338,7 +1478,7 @@ QString Page::selectedText(const QList<QPolygonF> & selection)
 
   fz_text_span * span = textSpan;
   Backend::Page::Box b;
-  
+
   while (span) {
     for (int i = 0; i < span->len; ++i) {
       QRectF charRect = toRectF(span->text[i].bbox);
@@ -1355,7 +1495,7 @@ QString Page::selectedText(const QList<QPolygonF> & selection)
   }
 
   fz_free_text_span(textSpan);
-  
+
   return retVal.trimmed();
 }
 

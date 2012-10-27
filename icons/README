@@ -2,6 +2,7 @@ Sources:
 ========
 
 document-open.png:       Tango (http://commons.wikimedia.org/w/index.php?title=File:Document-open.svg&oldid=57073679)
+document-print.png:      Derived from scalable/Document-print.svg
 fitwidth.png:            Derived from scalable/zoom-fit.svg
 fitwindow.png:           Derived from scalable/zoom-fit.svg
 hand.png:                Derived from scalable/hand.svg
@@ -23,6 +24,7 @@ zoom-select.png:         Derived from scalable/zoom.svg
 
 In scalable/
 ------------
+Document-print.svg:        Tango (http://commons.wikimedia.org/w/index.php?title=File:Document-print.svg&oldid=57073685)
 Format-text-normal.svg:    Tango (http://commons.wikimedia.org/w/index.php?title=File:Format-text-normal.svg&oldid=46717347)
 hand.svg:                  Derived Qt (/tools/designer/src/components/formeditor/images/cursors)
 logo.svg:                  Hand-made using FreeSerif font

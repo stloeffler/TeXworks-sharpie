@@ -20,7 +20,7 @@ namespace QtPDF {
 
 class PDFDocumentWidget : public PDFDocumentView
 {
-	Q_OBJECT
+  Q_OBJECT
 public:
   PDFDocumentWidget(QWidget * parent = NULL);
   virtual ~PDFDocumentWidget();
@@ -35,6 +35,9 @@ public:
   void setDefaultBackend(const QString & backend);
 
   // *TODO*: Possibly add some way to describe/choose/change the PDF backend used
+
+public slots:
+  void doPrintDialog();
 
 protected:
   QSharedPointer<QtPDF::PDFDocumentScene> _scene;

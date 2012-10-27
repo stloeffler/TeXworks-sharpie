@@ -24,6 +24,7 @@ PDFViewer::PDFViewer(const QString pdf_doc, QWidget *parent, Qt::WindowFlags fla
   _toolBar = new QToolBar(this);
 
   _toolBar->addAction(QIcon(QString::fromUtf8(":/icons/document-open.png")), tr("Open..."), this, SLOT(open()));
+  _toolBar->addAction(QIcon(QString::fromUtf8(":/icons/document-print.png")), tr("Print..."), docWidget, SLOT(doPrintDialog()))->setShortcut(QKeySequence::Print);
   _toolBar->addSeparator();
 
   _toolBar->addAction(QIcon(QString::fromUtf8(":/icons/zoomin.png")), tr("Zoom In"), docWidget, SLOT(zoomIn()));

@@ -91,5 +91,30 @@ void PDFDocumentWidget::setDefaultBackend(const QString & backend)
   }
 }
 
+void PDFDocumentWidget::doPrintDialog()
+{
+  QPrintDialog printDialog(this);
+
+  if (!_scene)
+    return;
+  QSharedPointer<Backend::Document> doc(_scene->document().toStrongRef());
+  if (!doc)
+    return;
+
+  printDialog.setMinMax(1, doc->numPages());
+  printDialog.setOption(QAbstractPrintDialog::PrintToFile);
+  printDialog.setOption(QAbstractPrintDialog::PrintSelection, false);
+  printDialog.setOption(QAbstractPrintDialog::PrintPageRange);
+  printDialog.setOption(QAbstractPrintDialog::PrintShowPageSize);
+  printDialog.setOption(QAbstractPrintDialog::PrintCollateCopies);
+#if QT_VERSION >= 0x040700
+  printDialog.setOption(QAbstractPrintDialog::PrintCurrentPage);
+#endif
+
+  if (printDialog.exec() != QDialog::Accepted)
+    return;
+
+  doc->print(printDialog.printer(), currentPage());
+}
 
 } // namespace QtPDF

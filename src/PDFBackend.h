@@ -30,6 +30,8 @@
 #include <QWaitCondition>
 #include <QEvent>
 #include <QMap>
+#include <QPrinter>
+
 
 namespace QtPDF {
 
@@ -112,10 +114,10 @@ public:
                          ProgramType_TrueType, ProgramType_Type1CFF, \
                          ProgramType_CIDCFF, ProgramType_OpenType };
   enum FontSource { Source_Embedded, Source_File, Source_Builtin };
-  
+
   PDFFontInfo() { };
   virtual ~PDFFontInfo() { };
-  
+
   FontType fontType() const { return _fontType; }
   CIDFontType CIDType() const { return _CIDType; }
   FontProgramType fontProgramType() const { return _fontProgramType; }
@@ -194,7 +196,7 @@ public:
   // the insertion. If overwrite == true, this will always be image, otherwise
   // it can be different
   QSharedPointer<QImage> setImage(const PDFPageTile & tile, QImage * image, const bool overwrite = true);
-  
+
   void lock() const { _lock.lockForRead(); }
   void unlock() const { _lock.unlock(); }
 
@@ -226,7 +228,7 @@ public:
 
   Page *page;
   QObject *listener;
-  
+
   virtual bool operator==(const PageProcessingRequest & r) const;
 #ifdef DEBUG
   virtual operator QString() const = 0;
@@ -371,7 +373,7 @@ public:
   QList<PDFToCItem> & children() { return _children; }
   PDFToCItemFlags flags() const { return _flags; }
   PDFToCItemFlags & flags() { return _flags; }
-  
+
   void setLabel(const QString label) { _label = label; }
   void setOpen(const bool isOpen = true) { _isOpen = isOpen; }
   void setAction(PDFAction * action) {
@@ -412,7 +414,7 @@ struct SearchResult
 // documents. Having a set of abstract classes allows tools like GUI viewers to
 // be written that are agnostic to the library that provides the actual PDF
 // implementation: Poppler, MuPDF, etc.
-// TODO: Should this class be derived from QObject to emit signals (e.g., 
+// TODO: Should this class be derived from QObject to emit signals (e.g.,
 // documentChanged() after reload, unlocking, etc.)?
 
 // This class is thread-safe. See implementation for internals.
@@ -457,7 +459,7 @@ public:
   QFlags<Permissions> permissions() const { QReadLocker docLocker(_docLock.data()); return _permissions; }
   // Uses doc-read-lock
   QFlags<Permissions>& permissions() { QReadLocker docLocker(_docLock.data()); return _permissions; }
-  
+
   // Uses doc-read-lock
   virtual bool isValid() const = 0;
   // Uses doc-read-lock
@@ -465,10 +467,10 @@ public:
   // Uses doc-write-lock
   virtual void reload() = 0;
 
-  // Returns `true` if unlocking was successful and `false` otherwise.  
+  // Returns `true` if unlocking was successful and `false` otherwise.
   // Uses doc-read-lock and may use doc-write-lock
   virtual bool unlock(const QString password) = 0;
-  
+
   // Override in derived class if it provides access to the document outline
   // strutures of the pdf file.
   virtual PDFToC toc() const { return PDFToC(); }
@@ -497,6 +499,8 @@ public:
   //
   //   - See TODO list in `Page::search`
   virtual QList<SearchResult> search(QString searchText, int startPage=0);
+
+  virtual void print(QPrinter * printer, const int currentPage) const { };
 
 protected:
   virtual void clearPages();
@@ -555,7 +559,7 @@ public:
     QRectF boundingBox;
     QList<Box> subBoxes;
   };
-  
+
   virtual ~Page();
 
   Document * document() { QReadLocker pageLocker(_pageLock); return _parent; }
@@ -566,7 +570,7 @@ public:
   virtual QList< QSharedPointer<Annotation::Link> > loadLinks() = 0;
   // Uses doc-read-lock and page-read-lock.
   virtual void asyncLoadLinks(QObject *listener);
-  
+
   // Returns a list of boxes (e.g., for the purpose of selecting text)
   // Box rectangles are in pdf coordinates (i.e., bp)
   // The backend may return big boxes comprised of subboxes (e.g., words made up
