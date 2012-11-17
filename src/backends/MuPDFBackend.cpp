@@ -825,7 +825,7 @@ bool Document::unlock(const QString password)
 
 void Document::print(QPrinter *printer, const int currentPage) const
 {
-  if (!printer || !permissions().testFlag(Permission_Print))
+  if (!printer || !mayPrint())
     return;
 
   QReadLocker docLocker(_docLock.data());

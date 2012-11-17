@@ -76,6 +76,7 @@ public:
   PDFToC toc() const;
   QList<PDFFontInfo> fonts() const;
 
+  virtual bool canPrint() const { return true; }
   void print(QPrinter *printer, const int currentPage) const;
 
 private:

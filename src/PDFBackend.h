@@ -500,6 +500,8 @@ public:
   //   - See TODO list in `Page::search`
   virtual QList<SearchResult> search(QString searchText, int startPage=0);
 
+  virtual bool canPrint() const { return false; }
+  virtual bool mayPrint() const { QReadLocker docLocker(_docLock); return _permissions.testFlag(Permission_Print); }
   virtual void print(QPrinter * printer, const int currentPage) const { };
 
 protected:
